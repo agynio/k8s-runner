@@ -1,0 +1,4 @@
+# Example overrides for local development
+image:
+  repository: agynio/k8s-runner
+  tag: dev

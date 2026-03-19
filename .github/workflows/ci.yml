@@ -1,0 +1,31 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      GOTOOLCHAIN: local
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22.x'
+
+      - name: Install buf
+        uses: bufbuild/buf-setup-action@v1
+
+      - name: Generate protobuf bindings
+        run: buf generate buf.build/agynio/api --path agynio/api/runner/v1 --template ./buf.gen.yaml
+
+      - name: Run tests
+        run: go test ./...
+
+      - name: Build
+        run: go build ./...

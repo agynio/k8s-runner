@@ -1,0 +1,20 @@
+# Binaries
+bin/
+*.exe
+*.test
+
+# Build artifacts
+coverage/
+dist/
+
+# Generated code
+internal/.gen/
+
+# Editor
+.DS_Store
+*.swp
+*.swo
+.*.sw?
+
+# Buffers / temp
+tmp/
