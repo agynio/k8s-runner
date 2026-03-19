@@ -5,6 +5,7 @@ go 1.22.0
 require (
 	github.com/google/uuid v1.6.0
 	github.com/openziti/sdk-golang v0.24.1
+	github.com/stretchr/testify v1.11.1
 	go.uber.org/zap v1.27.1
 	google.golang.org/grpc v1.67.0
 	google.golang.org/protobuf v1.36.11
@@ -85,6 +86,7 @@ require (
 	github.com/orcaman/concurrent-map/v2 v2.0.1 // indirect
 	github.com/parallaxsecond/parsec-client-go v0.0.0-20221025095442-f0a77d263cf9 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
+	github.com/pmezard/go-difflib v1.0.0 // indirect
 	github.com/power-devops/perfstat v0.0.0-20210106213030-5aafc221ea8c // indirect
 	github.com/rcrowley/go-metrics v0.0.0-20250401214520-65e299d6c5c9 // indirect
 	github.com/rogpeppe/go-internal v1.13.1 // indirect
