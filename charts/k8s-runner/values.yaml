@@ -97,6 +97,8 @@ env:
     value: "info"
   - name: ZITI_IDENTITY_FILE
     value: ""
+  - name: DISABLE_ZITI
+    value: "true"
 envFrom: []
 extraEnvVars: []
 extraEnvVarsCM: ""

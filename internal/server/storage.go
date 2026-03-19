@@ -24,7 +24,7 @@ func (s *Server) PutArchive(ctx context.Context, req *runnerv1.PutArchiveRequest
 
 	pod, err := s.clientset.CoreV1().Pods(s.namespace).Get(ctx, workloadID, metav1.GetOptions{})
 	if err != nil {
-		return nil, grpcErrorFromKube(err, codes.Internal)
+		return nil, grpcErrorFromKube(s.logger, err, codes.Internal)
 	}
 	containerName, err := mainContainerName(pod)
 	if err != nil {
@@ -83,7 +83,7 @@ func (s *Server) RemoveVolume(ctx context.Context, req *runnerv1.RemoveVolumeReq
 	}
 
 	if err := s.clientset.CoreV1().PersistentVolumeClaims(s.namespace).Delete(ctx, volumeName, metav1.DeleteOptions{}); err != nil {
-		return nil, grpcErrorFromKube(err, codes.Internal)
+		return nil, grpcErrorFromKube(s.logger, err, codes.Internal)
 	}
 
 	return &runnerv1.RemoveVolumeResponse{}, nil

@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -19,6 +20,7 @@ const (
 type Config struct {
 	GRPCAddr         string
 	Namespace        string
+	DisableZiti      bool
 	ZitiIdentityFile string
 	ZitiServiceName  string
 	StorageClass     *string
@@ -36,9 +38,19 @@ func Load() (Config, error) {
 	if cfg.Namespace == "" {
 		return Config{}, fmt.Errorf("KUBE_NAMESPACE is required")
 	}
+	if value, ok := os.LookupEnv("DISABLE_ZITI"); ok {
+		disableZiti, err := strconv.ParseBool(strings.TrimSpace(value))
+		if err != nil {
+			return Config{}, fmt.Errorf("invalid DISABLE_ZITI: %w", err)
+		}
+		cfg.DisableZiti = disableZiti
+	}
 
 	cfg.ZitiIdentityFile = strings.TrimSpace(os.Getenv("ZITI_IDENTITY_FILE"))
 	cfg.ZitiServiceName = readEnv("ZITI_SERVICE_NAME", defaultZitiServiceName)
+	if !cfg.DisableZiti && cfg.ZitiIdentityFile == "" {
+		return Config{}, fmt.Errorf("ZITI_IDENTITY_FILE is required unless DISABLE_ZITI is true")
+	}
 
 	storageClass := strings.TrimSpace(os.Getenv("PVC_STORAGE_CLASS"))
 	if storageClass != "" {

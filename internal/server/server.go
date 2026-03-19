@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"sync"
 
 	"go.uber.org/zap"
@@ -32,15 +33,29 @@ type Server struct {
 	execSessionsMu sync.Mutex
 }
 
+// Options defines required inputs for constructing a Server.
+type Options struct {
+	Clientset    kubernetes.Interface
+	RestConfig   *rest.Config
+	Namespace    string
+	StorageClass *string
+	StorageSize  string
+	Logger       *zap.Logger
+}
+
 // New constructs a RunnerService server.
-func New(clientset kubernetes.Interface, restConfig *rest.Config, namespace string, storageClass *string, storageSize string, logger *zap.Logger) *Server {
+func New(options Options) *Server {
 	return &Server{
-		clientset:    clientset,
-		restConfig:   restConfig,
-		namespace:    namespace,
-		storageClass: storageClass,
-		storageSize:  storageSize,
-		logger:       logger,
+		clientset:    options.Clientset,
+		restConfig:   options.RestConfig,
+		namespace:    options.Namespace,
+		storageClass: options.StorageClass,
+		storageSize:  options.StorageSize,
+		logger:       options.Logger,
 		execSessions: make(map[string]*execSession),
 	}
+}
+
+func (s *Server) Ready(_ context.Context, _ *runnerv1.ReadyRequest) (*runnerv1.ReadyResponse, error) {
+	return &runnerv1.ReadyResponse{Status: "ok"}, nil
 }

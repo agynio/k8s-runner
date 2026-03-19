@@ -51,7 +51,14 @@ func run() error {
 	grpcServer := grpc.NewServer()
 	runnerv1.RegisterRunnerServiceServer(
 		grpcServer,
-		server.New(kubeClient.Clientset, kubeClient.RestConfig, cfg.Namespace, cfg.StorageClass, cfg.StorageSize, logger),
+		server.New(server.Options{
+			Clientset:    kubeClient.Clientset,
+			RestConfig:   kubeClient.RestConfig,
+			Namespace:    cfg.Namespace,
+			StorageClass: cfg.StorageClass,
+			StorageSize:  cfg.StorageSize,
+			Logger:       logger,
+		}),
 	)
 
 	var wg sync.WaitGroup
@@ -79,9 +86,10 @@ func run() error {
 	defer listener.Close()
 	startServe(listener, "tcp")
 
-	var zitiContext ziti.Context
-	if cfg.ZitiIdentityFile != "" {
-		zitiContext, err = ziti.NewContextFromFile(cfg.ZitiIdentityFile)
+	if cfg.DisableZiti {
+		logger.Info("ziti disabled")
+	} else {
+		zitiContext, err := ziti.NewContextFromFile(cfg.ZitiIdentityFile)
 		if err != nil {
 			return fmt.Errorf("create ziti context: %w", err)
 		}

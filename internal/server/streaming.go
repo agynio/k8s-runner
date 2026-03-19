@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"go.uber.org/zap"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -38,11 +39,12 @@ func (s *Server) StreamWorkloadLogs(req *runnerv1.StreamWorkloadLogsRequest, str
 
 	logStream, err := s.clientset.CoreV1().Pods(s.namespace).GetLogs(workloadID, options).Stream(stream.Context())
 	if err != nil {
-		return grpcErrorFromKube(err, codes.Internal)
+		return grpcErrorFromKube(s.logger, err, codes.Internal)
 	}
 	defer logStream.Close()
 
-	buf := make([]byte, 4096)
+	const logReadBufferSize = 4096
+	buf := make([]byte, logReadBufferSize)
 	for {
 		n, readErr := logStream.Read(buf)
 		if n > 0 {
@@ -82,7 +84,7 @@ func (s *Server) StreamEvents(req *runnerv1.StreamEventsRequest, stream runnerv1
 
 	watcher, err := s.clientset.CoreV1().Events(s.namespace).Watch(ctx, metav1.ListOptions{})
 	if err != nil {
-		return grpcErrorFromKube(err, codes.Internal)
+		return grpcErrorFromKube(s.logger, err, codes.Internal)
 	}
 	defer watcher.Stop()
 
@@ -92,7 +94,12 @@ func (s *Server) StreamEvents(req *runnerv1.StreamEventsRequest, stream runnerv1
 			return nil
 		case event, ok := <-watcher.ResultChan():
 			if !ok {
-				return nil
+				s.logger.Warn("event watcher closed", zap.String("namespace", s.namespace))
+				return stream.Send(&runnerv1.StreamEventsResponse{
+					Event: &runnerv1.StreamEventsResponse_Error{
+						Error: streamError("events_watcher_closed", fmt.Errorf("event watch closed")),
+					},
+				})
 			}
 			if event.Type == watch.Error {
 				return stream.Send(&runnerv1.StreamEventsResponse{

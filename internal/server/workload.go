@@ -20,10 +20,6 @@ import (
 	runnerv1 "github.com/agynio/k8s-runner/internal/.gen/agynio/api/runner/v1"
 )
 
-func (s *Server) Ready(_ context.Context, _ *runnerv1.ReadyRequest) (*runnerv1.ReadyResponse, error) {
-	return &runnerv1.ReadyResponse{Status: "ok"}, nil
-}
-
 func (s *Server) StartWorkload(ctx context.Context, req *runnerv1.StartWorkloadRequest) (*runnerv1.StartWorkloadResponse, error) {
 	if req == nil || req.Main == nil {
 		return nil, status.Error(codes.InvalidArgument, "main_container_required")
@@ -69,7 +65,7 @@ func (s *Server) StartWorkload(ctx context.Context, req *runnerv1.StartWorkloadR
 	}
 
 	if _, err := s.clientset.CoreV1().Pods(s.namespace).Create(ctx, pod, metav1.CreateOptions{}); err != nil {
-		return nil, grpcErrorFromKube(err, codes.Internal)
+		return nil, grpcErrorFromKube(s.logger, err, codes.Internal)
 	}
 
 	sidecars := make([]*runnerv1.SidecarInstance, 0, len(sidecarNames))
@@ -97,10 +93,12 @@ func (s *Server) StopWorkload(ctx context.Context, req *runnerv1.StopWorkloadReq
 		return nil, status.Error(codes.InvalidArgument, "workload_id_required")
 	}
 
-	grace := int64(req.GetTimeoutSec())
-	deleteOptions := metav1.DeleteOptions{GracePeriodSeconds: &grace}
+	deleteOptions := metav1.DeleteOptions{}
+	if grace := int64(req.GetTimeoutSec()); grace > 0 {
+		deleteOptions.GracePeriodSeconds = &grace
+	}
 	if err := s.clientset.CoreV1().Pods(s.namespace).Delete(ctx, workloadID, deleteOptions); err != nil {
-		return nil, grpcErrorFromKube(err, codes.Internal)
+		return nil, grpcErrorFromKube(s.logger, err, codes.Internal)
 	}
 
 	return &runnerv1.StopWorkloadResponse{}, nil
@@ -114,7 +112,7 @@ func (s *Server) RemoveWorkload(ctx context.Context, req *runnerv1.RemoveWorkloa
 
 	pod, err := s.clientset.CoreV1().Pods(s.namespace).Get(ctx, workloadID, metav1.GetOptions{})
 	if err != nil {
-		return nil, grpcErrorFromKube(err, codes.Internal)
+		return nil, grpcErrorFromKube(s.logger, err, codes.Internal)
 	}
 
 	var grace *int64
@@ -124,15 +122,23 @@ func (s *Server) RemoveWorkload(ctx context.Context, req *runnerv1.RemoveWorkloa
 	}
 	deleteOptions := metav1.DeleteOptions{GracePeriodSeconds: grace}
 	if err := s.clientset.CoreV1().Pods(s.namespace).Delete(ctx, workloadID, deleteOptions); err != nil {
-		return nil, grpcErrorFromKube(err, codes.Internal)
+		return nil, grpcErrorFromKube(s.logger, err, codes.Internal)
 	}
 
 	if req.GetRemoveVolumes() {
 		pvcNames := parsePVCAnnotation(pod.Annotations)
+		var deleteErrs []error
 		for _, pvc := range pvcNames {
 			if err := s.clientset.CoreV1().PersistentVolumeClaims(s.namespace).Delete(ctx, pvc, metav1.DeleteOptions{}); err != nil {
-				return nil, grpcErrorFromKube(err, codes.Internal)
+				if apierrors.IsNotFound(err) {
+					continue
+				}
+				deleteErrs = append(deleteErrs, fmt.Errorf("delete pvc %s: %w", pvc, err))
 			}
+		}
+		if len(deleteErrs) > 0 {
+			s.logger.Error("failed to delete pvcs", zap.String("workload_id", workloadID), zap.Errors("errors", deleteErrs))
+			return nil, status.Error(codes.Internal, "pvc_cleanup_failed")
 		}
 	}
 
@@ -147,7 +153,7 @@ func (s *Server) InspectWorkload(ctx context.Context, req *runnerv1.InspectWorkl
 
 	pod, err := s.clientset.CoreV1().Pods(s.namespace).Get(ctx, workloadID, metav1.GetOptions{})
 	if err != nil {
-		return nil, grpcErrorFromKube(err, codes.Internal)
+		return nil, grpcErrorFromKube(s.logger, err, codes.Internal)
 	}
 	if len(pod.Spec.Containers) == 0 {
 		return nil, status.Error(codes.Internal, "pod_missing_containers")
@@ -155,8 +161,11 @@ func (s *Server) InspectWorkload(ctx context.Context, req *runnerv1.InspectWorkl
 
 	mainContainer := pod.Spec.Containers[0]
 	image := mainContainer.Image
-	if len(pod.Status.ContainerStatuses) > 0 {
-		image = pod.Status.ContainerStatuses[0].Image
+	for _, status := range pod.Status.ContainerStatuses {
+		if status.Name == mainContainer.Name {
+			image = status.Image
+			break
+		}
 	}
 
 	stateStatus := strings.ToLower(string(pod.Status.Phase))
@@ -183,7 +192,7 @@ func (s *Server) TouchWorkload(ctx context.Context, req *runnerv1.TouchWorkloadR
 	timestamp := time.Now().UTC().Format(time.RFC3339Nano)
 	patch := fmt.Sprintf(`{"metadata":{"annotations":{"%s":"%s"}}}`, touchedAtAnnotationKey, timestamp)
 	if _, err := s.clientset.CoreV1().Pods(s.namespace).Patch(ctx, workloadID, types.MergePatchType, []byte(patch), metav1.PatchOptions{}); err != nil {
-		return nil, grpcErrorFromKube(err, codes.Internal)
+		return nil, grpcErrorFromKube(s.logger, err, codes.Internal)
 	}
 
 	return &runnerv1.TouchWorkloadResponse{}, nil
@@ -280,7 +289,7 @@ func (s *Server) ensurePVC(ctx context.Context, volume *runnerv1.VolumeSpec, lab
 	if _, err := s.clientset.CoreV1().PersistentVolumeClaims(s.namespace).Get(ctx, pvcName, metav1.GetOptions{}); err == nil {
 		return pvcName, nil
 	} else if !apierrors.IsNotFound(err) {
-		return "", grpcErrorFromKube(err, codes.Internal)
+		return "", grpcErrorFromKube(s.logger, err, codes.Internal)
 	}
 
 	requestSize, err := resource.ParseQuantity(s.storageSize)
@@ -314,7 +323,7 @@ func (s *Server) ensurePVC(ctx context.Context, volume *runnerv1.VolumeSpec, lab
 	}
 
 	if _, err := s.clientset.CoreV1().PersistentVolumeClaims(s.namespace).Create(ctx, pvc, metav1.CreateOptions{}); err != nil {
-		return "", grpcErrorFromKube(err, codes.Internal)
+		return "", grpcErrorFromKube(s.logger, err, codes.Internal)
 	}
 
 	s.logger.Info("created pvc", zap.String("pvc", pvcName))
@@ -417,6 +426,10 @@ func buildContainer(spec *runnerv1.ContainerSpec, fallbackName string, volumeLoo
 		VolumeMounts: volumeMounts,
 	}
 	if entrypoint := strings.TrimSpace(spec.Entrypoint); entrypoint != "" {
+		if strings.ContainsAny(entrypoint, " \t\n\r") {
+			return corev1.Container{}, status.Error(codes.InvalidArgument, "entrypoint_must_be_single_path")
+		}
+		// Entrypoint is a single binary path; use Cmd for args.
 		container.Command = []string{entrypoint}
 	}
 
@@ -442,31 +455,24 @@ func parsePVCAnnotation(annotations map[string]string) []string {
 	return result
 }
 
+type volumeInfo struct {
+	mountType string
+	source    string
+}
+
 func mountsForPod(pod *corev1.Pod, mainContainerName string) []*runnerv1.TargetMount {
 	if pod == nil {
 		return nil
 	}
-	volumeSources := make(map[string]struct {
-		mountType string
-		source    string
-	})
+	volumeSources := make(map[string]volumeInfo)
 	for _, volume := range pod.Spec.Volumes {
 		switch {
 		case volume.PersistentVolumeClaim != nil:
-			volumeSources[volume.Name] = struct {
-				mountType string
-				source    string
-			}{mountType: "pvc", source: volume.PersistentVolumeClaim.ClaimName}
+			volumeSources[volume.Name] = volumeInfo{mountType: "pvc", source: volume.PersistentVolumeClaim.ClaimName}
 		case volume.EmptyDir != nil:
-			volumeSources[volume.Name] = struct {
-				mountType string
-				source    string
-			}{mountType: "emptydir", source: volume.Name}
+			volumeSources[volume.Name] = volumeInfo{mountType: "emptydir", source: volume.Name}
 		default:
-			volumeSources[volume.Name] = struct {
-				mountType string
-				source    string
-			}{mountType: "unknown", source: volume.Name}
+			volumeSources[volume.Name] = volumeInfo{mountType: "unknown", source: volume.Name}
 		}
 	}
 

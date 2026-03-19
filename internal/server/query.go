@@ -21,7 +21,7 @@ func (s *Server) GetWorkloadLabels(ctx context.Context, req *runnerv1.GetWorkloa
 
 	pod, err := s.clientset.CoreV1().Pods(s.namespace).Get(ctx, workloadID, metav1.GetOptions{})
 	if err != nil {
-		return nil, grpcErrorFromKube(err, codes.Internal)
+		return nil, grpcErrorFromKube(s.logger, err, codes.Internal)
 	}
 
 	return &runnerv1.GetWorkloadLabelsResponse{Labels: pod.Labels}, nil
@@ -31,7 +31,7 @@ func (s *Server) FindWorkloadsByLabels(ctx context.Context, req *runnerv1.FindWo
 	selector := labels.Set(req.GetLabels()).AsSelector().String()
 	list, err := s.clientset.CoreV1().Pods(s.namespace).List(ctx, metav1.ListOptions{LabelSelector: selector})
 	if err != nil {
-		return nil, grpcErrorFromKube(err, codes.Internal)
+		return nil, grpcErrorFromKube(s.logger, err, codes.Internal)
 	}
 
 	ids := make([]string, 0, len(list.Items))
@@ -54,7 +54,7 @@ func (s *Server) ListWorkloadsByVolume(ctx context.Context, req *runnerv1.ListWo
 	selector := labels.Set(map[string]string{managedByLabelKey: managedByLabelValue}).AsSelector().String()
 	list, err := s.clientset.CoreV1().Pods(s.namespace).List(ctx, metav1.ListOptions{LabelSelector: selector})
 	if err != nil {
-		return nil, grpcErrorFromKube(err, codes.Internal)
+		return nil, grpcErrorFromKube(s.logger, err, codes.Internal)
 	}
 
 	ids := make([]string, 0)

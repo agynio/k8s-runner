@@ -204,20 +204,37 @@ func (b *tailBuffer) Bytes() []byte {
 	return append([]byte(nil), b.data...)
 }
 
+type execStartValidationError struct {
+	code    string
+	message string
+}
+
+type execStreamState struct {
+	stdinReader *io.PipeReader
+	stdinWriter *io.PipeWriter
+
+	stdoutTail *tailBuffer
+	stderrTail *tailBuffer
+
+	sendMu       *sync.Mutex
+	stdoutWriter *execOutputWriter
+	stderrWriter io.Writer
+
+	resizeCh chan remotecommand.TerminalSize
+	queue    *terminalSizeQueue
+	useTTY   bool
+}
+
 func (s *Server) Exec(stream runnerv1.RunnerService_ExecServer) error {
-	first, err := stream.Recv()
+	start, err := recvExecStart(stream)
 	if err == io.EOF {
 		return nil
 	}
 	if err != nil {
 		return err
 	}
-	start := first.GetStart()
-	if start == nil {
-		return sendExecError(stream, nil, "exec_start_required", "exec start required", false)
-	}
-	if strings.TrimSpace(start.TargetId) == "" {
-		return sendExecError(stream, nil, "target_id_required", "target_id required", false)
+	if validationErr := validateExecStart(start); validationErr != nil {
+		return sendExecError(stream, nil, validationErr.code, validationErr.message, false)
 	}
 
 	command, err := buildExecCommand(start)
@@ -225,81 +242,24 @@ func (s *Server) Exec(stream runnerv1.RunnerService_ExecServer) error {
 		return sendExecError(stream, nil, "invalid_command", err.Error(), false)
 	}
 
-	pod, err := s.clientset.CoreV1().Pods(s.namespace).Get(stream.Context(), start.TargetId, metav1.GetOptions{})
+	containerName, err := s.resolveExecTarget(stream.Context(), start.TargetId)
 	if err != nil {
 		return sendExecError(stream, nil, "exec_start_failed", err.Error(), false)
-	}
-	containerName, err := mainContainerName(pod)
-	if err != nil {
-		return err
 	}
 
 	execID := uuid.NewString()
 	execCtx, cancel := context.WithCancel(stream.Context())
-	session := newExecSession(execID, cancel)
+	defer cancel()
 
-	s.execSessionsMu.Lock()
-	s.execSessions[execID] = session
-	s.execSessionsMu.Unlock()
-	defer func() {
-		s.execSessionsMu.Lock()
-		delete(s.execSessions, execID)
-		s.execSessionsMu.Unlock()
-	}()
+	session := newExecSession(execID, cancel)
+	cleanup := s.registerExecSession(session)
+	defer cleanup()
 
 	options := start.GetOptions()
-	separateStderr := true
-	if options != nil {
-		separateStderr = options.SeparateStderr
-	}
-	useTTY := options != nil && options.Tty
+	state := setupExecStreams(stream, options, session)
+	defer state.stdinWriter.Close()
 
-	stdinReader, stdinWriter := io.Pipe()
-	defer stdinWriter.Close()
-
-	stdoutTail := newTailBuffer(resolveExitTailBytes(options))
-	stderrTail := newTailBuffer(resolveExitTailBytes(options))
-
-	sendMu := &sync.Mutex{}
-	stdoutSeq := uint64(0)
-	stderrSeq := uint64(0)
-
-	stdoutWriter := &execOutputWriter{
-		stream:    stream,
-		sendMu:    sendMu,
-		seq:       &stdoutSeq,
-		output:    outputStdout,
-		idleReset: session.resetIdleTimer,
-		tail:      stdoutTail,
-	}
-	var stderrWriter io.Writer
-	if useTTY {
-		stderrWriter = nil
-	} else if separateStderr {
-		stderrWriter = &execOutputWriter{
-			stream:    stream,
-			sendMu:    sendMu,
-			seq:       &stderrSeq,
-			output:    outputStderr,
-			idleReset: session.resetIdleTimer,
-			tail:      stderrTail,
-		}
-	} else {
-		stderrWriter = stdoutWriter
-	}
-
-	resizeCh := make(chan remotecommand.TerminalSize, 1)
-	queue := &terminalSizeQueue{ch: resizeCh}
-
-	execOptions := &corev1.PodExecOptions{
-		Container: containerName,
-		Command:   command,
-		Stdin:     true,
-		Stdout:    true,
-		Stderr:    !useTTY,
-		TTY:       useTTY,
-	}
-
+	execOptions := buildPodExecOptions(containerName, command, state.useTTY)
 	reqURL := s.clientset.CoreV1().RESTClient().Post().
 		Resource("pods").
 		Name(start.TargetId).
@@ -309,10 +269,10 @@ func (s *Server) Exec(stream runnerv1.RunnerService_ExecServer) error {
 
 	executor, err := remotecommand.NewSPDYExecutor(s.restConfig, "POST", reqURL.URL())
 	if err != nil {
-		return sendExecError(stream, sendMu, "exec_start_failed", err.Error(), false)
+		return sendExecError(stream, state.sendMu, "exec_start_failed", err.Error(), false)
 	}
 
-	if err := sendExecStarted(stream, sendMu, execID); err != nil {
+	if err := sendExecStarted(stream, state.sendMu, execID); err != nil {
 		return err
 	}
 
@@ -320,64 +280,16 @@ func (s *Server) Exec(stream runnerv1.RunnerService_ExecServer) error {
 		session.startTimers(timeoutDuration(options.TimeoutMs), timeoutDuration(options.IdleTimeoutMs), options.KillOnTimeout)
 	}
 
-	execErrCh := make(chan error, 1)
-	go func() {
-		execErrCh <- executor.StreamWithContext(execCtx, remotecommand.StreamOptions{
-			Stdin:             stdinReader,
-			Stdout:            stdoutWriter,
-			Stderr:            stderrWriter,
-			Tty:               useTTY,
-			TerminalSizeQueue: queue,
-		})
-	}()
+	execErrCh := startExecExecutor(execCtx, executor, state)
 
 	reqCh := make(chan *runnerv1.ExecRequest, 4)
 	reqErrCh := make(chan error, 1)
 	go recvExecRequests(stream.Context(), stream, reqCh, reqErrCh)
 
-	for {
-		select {
-		case req := <-reqCh:
-			if req == nil {
-				reqCh = nil
-				continue
-			}
-			session.resetIdleTimer()
-			if stdin := req.GetStdin(); stdin != nil {
-				if len(stdin.Data) > 0 {
-					if _, err := stdinWriter.Write(stdin.Data); err != nil {
-						session.terminate(runnerv1.ExecExitReason_EXEC_EXIT_REASON_RUNNER_ERROR, false)
-					}
-				}
-				if stdin.Eof {
-					_ = stdinWriter.Close()
-				}
-				continue
-			}
-			if resize := req.GetResize(); resize != nil && useTTY {
-				if resize.Cols > 0 && resize.Rows > 0 {
-					pushTerminalSize(resizeCh, remotecommand.TerminalSize{Width: uint16(resize.Cols), Height: uint16(resize.Rows)})
-				}
-				continue
-			}
-			if req.GetStart() != nil {
-				_ = sendExecError(stream, sendMu, "exec_already_started", "duplicate exec start received", false)
-			}
-		case recvErr := <-reqErrCh:
-			if recvErr == io.EOF {
-				session.terminate(runnerv1.ExecExitReason_EXEC_EXIT_REASON_CANCELLED, false)
-			} else {
-				session.terminate(runnerv1.ExecExitReason_EXEC_EXIT_REASON_RUNNER_ERROR, false)
-			}
-			reqErrCh = nil
-		case execErr := <-execErrCh:
-			close(resizeCh)
-			session.stopTimers()
-			return finishExec(stream, sendMu, session, execErr, stdoutTail, stderrTail)
-		case <-stream.Context().Done():
-			session.terminate(runnerv1.ExecExitReason_EXEC_EXIT_REASON_CANCELLED, false)
-		}
-	}
+	execErr := runExecLoop(stream.Context(), stream, session, state, reqCh, reqErrCh, execErrCh)
+	close(state.resizeCh)
+	session.stopTimers()
+	return finishExec(stream, state.sendMu, session, execErr, state.stdoutTail, state.stderrTail)
 }
 
 func (s *Server) CancelExecution(ctx context.Context, req *runnerv1.CancelExecutionRequest) (*runnerv1.CancelExecutionResponse, error) {
@@ -415,6 +327,187 @@ func recvExecRequests(ctx context.Context, stream runnerv1.RunnerService_ExecSer
 	}
 }
 
+func recvExecStart(stream runnerv1.RunnerService_ExecServer) (*runnerv1.ExecStartRequest, error) {
+	first, err := stream.Recv()
+	if err != nil {
+		return nil, err
+	}
+	return first.GetStart(), nil
+}
+
+func validateExecStart(start *runnerv1.ExecStartRequest) *execStartValidationError {
+	if start == nil {
+		return &execStartValidationError{code: "exec_start_required", message: "exec start required"}
+	}
+	if strings.TrimSpace(start.TargetId) == "" {
+		return &execStartValidationError{code: "target_id_required", message: "target_id required"}
+	}
+	return nil
+}
+
+func (s *Server) resolveExecTarget(ctx context.Context, targetID string) (string, error) {
+	pod, err := s.clientset.CoreV1().Pods(s.namespace).Get(ctx, targetID, metav1.GetOptions{})
+	if err != nil {
+		return "", err
+	}
+	containerName, err := mainContainerName(pod)
+	if err != nil {
+		return "", err
+	}
+	return containerName, nil
+}
+
+func (s *Server) registerExecSession(session *execSession) func() {
+	s.execSessionsMu.Lock()
+	s.execSessions[session.id] = session
+	s.execSessionsMu.Unlock()
+	return func() {
+		s.execSessionsMu.Lock()
+		delete(s.execSessions, session.id)
+		s.execSessionsMu.Unlock()
+	}
+}
+
+func setupExecStreams(stream runnerv1.RunnerService_ExecServer, options *runnerv1.ExecOptions, session *execSession) *execStreamState {
+	separateStderr := true
+	if options != nil {
+		separateStderr = options.SeparateStderr
+	}
+	useTTY := options != nil && options.Tty
+
+	stdinReader, stdinWriter := io.Pipe()
+
+	stdoutTail := newTailBuffer(resolveExitTailBytes(options))
+	stderrTail := newTailBuffer(resolveExitTailBytes(options))
+
+	sendMu := &sync.Mutex{}
+	stdoutSeq := uint64(0)
+	stderrSeq := uint64(0)
+
+	stdoutWriter := &execOutputWriter{
+		stream:    stream,
+		sendMu:    sendMu,
+		seq:       &stdoutSeq,
+		output:    outputStdout,
+		idleReset: session.resetIdleTimer,
+		tail:      stdoutTail,
+	}
+	var stderrWriter io.Writer
+	if useTTY {
+		stderrWriter = nil
+	} else if separateStderr {
+		stderrWriter = &execOutputWriter{
+			stream:    stream,
+			sendMu:    sendMu,
+			seq:       &stderrSeq,
+			output:    outputStderr,
+			idleReset: session.resetIdleTimer,
+			tail:      stderrTail,
+		}
+	} else {
+		stderrWriter = stdoutWriter
+	}
+
+	resizeCh := make(chan remotecommand.TerminalSize, 1)
+	queue := &terminalSizeQueue{ch: resizeCh}
+
+	return &execStreamState{
+		stdinReader:  stdinReader,
+		stdinWriter:  stdinWriter,
+		stdoutTail:   stdoutTail,
+		stderrTail:   stderrTail,
+		sendMu:       sendMu,
+		stdoutWriter: stdoutWriter,
+		stderrWriter: stderrWriter,
+		resizeCh:     resizeCh,
+		queue:        queue,
+		useTTY:       useTTY,
+	}
+}
+
+func buildPodExecOptions(containerName string, command []string, useTTY bool) *corev1.PodExecOptions {
+	return &corev1.PodExecOptions{
+		Container: containerName,
+		Command:   command,
+		Stdin:     true,
+		Stdout:    true,
+		Stderr:    !useTTY,
+		TTY:       useTTY,
+	}
+}
+
+func startExecExecutor(ctx context.Context, executor remotecommand.Executor, state *execStreamState) <-chan error {
+	execErrCh := make(chan error, 1)
+	go func() {
+		execErrCh <- executor.StreamWithContext(ctx, remotecommand.StreamOptions{
+			Stdin:             state.stdinReader,
+			Stdout:            state.stdoutWriter,
+			Stderr:            state.stderrWriter,
+			Tty:               state.useTTY,
+			TerminalSizeQueue: state.queue,
+		})
+	}()
+	return execErrCh
+}
+
+func runExecLoop(
+	ctx context.Context,
+	stream runnerv1.RunnerService_ExecServer,
+	session *execSession,
+	state *execStreamState,
+	reqCh <-chan *runnerv1.ExecRequest,
+	reqErrCh <-chan error,
+	execErrCh <-chan error,
+) error {
+	requestCh := reqCh
+	recvErrCh := reqErrCh
+	for {
+		select {
+		case req, ok := <-requestCh:
+			if !ok {
+				requestCh = nil
+				continue
+			}
+			if req == nil {
+				continue
+			}
+			session.resetIdleTimer()
+			if stdin := req.GetStdin(); stdin != nil {
+				if len(stdin.Data) > 0 {
+					if _, err := state.stdinWriter.Write(stdin.Data); err != nil {
+						_ = state.stdinWriter.Close()
+						session.terminate(runnerv1.ExecExitReason_EXEC_EXIT_REASON_RUNNER_ERROR, false)
+					}
+				}
+				if stdin.Eof {
+					_ = state.stdinWriter.Close()
+				}
+				continue
+			}
+			if resize := req.GetResize(); resize != nil && state.useTTY {
+				if resize.Cols > 0 && resize.Rows > 0 {
+					pushTerminalSize(state.resizeCh, remotecommand.TerminalSize{Width: uint16(resize.Cols), Height: uint16(resize.Rows)})
+				}
+				continue
+			}
+			if req.GetStart() != nil {
+				_ = sendExecError(stream, state.sendMu, "exec_already_started", "duplicate exec start received", false)
+			}
+		case recvErr := <-recvErrCh:
+			if recvErr == io.EOF {
+				session.terminate(runnerv1.ExecExitReason_EXEC_EXIT_REASON_CANCELLED, false)
+			} else {
+				session.terminate(runnerv1.ExecExitReason_EXEC_EXIT_REASON_RUNNER_ERROR, false)
+			}
+			recvErrCh = nil
+		case execErr := <-execErrCh:
+			return execErr
+		case <-ctx.Done():
+			session.terminate(runnerv1.ExecExitReason_EXEC_EXIT_REASON_CANCELLED, false)
+		}
+	}
+}
+
 func buildExecCommand(start *runnerv1.ExecStartRequest) ([]string, error) {
 	if start == nil {
 		return nil, errors.New("exec start required")
@@ -433,6 +526,8 @@ func buildExecCommand(start *runnerv1.ExecStartRequest) ([]string, error) {
 	} else {
 		command = []string{"/bin/sh", "-c", shell}
 	}
+	// When workdir and env are provided, the final command becomes:
+	// env FOO=bar /bin/sh -c 'cd "$1" && shift && exec "$@"' -- <workdir> <command...>
 	if start.Options != nil && start.Options.Workdir != "" {
 		command = append([]string{"/bin/sh", "-c", "cd \"$1\" && shift && exec \"$@\"", "--", start.Options.Workdir}, command...)
 	}
