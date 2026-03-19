@@ -77,4 +77,4 @@ jobs:
           devspace version
 
       - name: Run e2e tests
-        run: devspace run test:e2e
+        run: devspace run-pipeline test:e2e
