@@ -1,0 +1,61 @@
+package server
+
+import (
+	"context"
+	"sync"
+
+	"go.uber.org/zap"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
+
+	runnerv1 "github.com/agynio/k8s-runner/internal/.gen/agynio/api/runner/v1"
+)
+
+const (
+	managedByLabelKey      = "app.kubernetes.io/managed-by"
+	managedByLabelValue    = "k8s-runner"
+	workloadIDLabelKey     = "agyn.io/workload-id"
+	pvcAnnotationKey       = "agyn.io/pvc-names"
+	touchedAtAnnotationKey = "agyn.io/touched-at"
+)
+
+// Server implements the RunnerService gRPC API against the Kubernetes API.
+type Server struct {
+	runnerv1.UnimplementedRunnerServiceServer
+	clientset    kubernetes.Interface
+	restConfig   *rest.Config
+	namespace    string
+	storageClass *string
+	storageSize  string
+	logger       *zap.Logger
+
+	execSessions   map[string]*execSession
+	execSessionsMu sync.Mutex
+}
+
+// Options defines required inputs for constructing a Server.
+type Options struct {
+	Clientset    kubernetes.Interface
+	RestConfig   *rest.Config
+	Namespace    string
+	StorageClass *string
+	StorageSize  string
+	Logger       *zap.Logger
+}
+
+// New constructs a RunnerService server.
+func New(options Options) *Server {
+	return &Server{
+		clientset:    options.Clientset,
+		restConfig:   options.RestConfig,
+		namespace:    options.Namespace,
+		storageClass: options.StorageClass,
+		storageSize:  options.StorageSize,
+		logger:       options.Logger,
+		execSessions: make(map[string]*execSession),
+	}
+}
+
+func (s *Server) Ready(_ context.Context, _ *runnerv1.ReadyRequest) (*runnerv1.ReadyResponse, error) {
+	return &runnerv1.ReadyResponse{Status: "ok"}, nil
+}
