@@ -88,8 +88,19 @@ jobs:
             --set image.tag=dev \
             --set image.pullPolicy=Never \
             --set fullnameOverride=k8s-runner \
-            --set rbac.clusterWide=true \
-            --wait --timeout 120s
+            --set rbac.clusterWide=true
+          echo "Waiting for k8s-runner deployment to be ready..."
+          if ! kubectl rollout status deployment/k8s-runner -n platform --timeout=120s; then
+            echo "=== Pod status ==="
+            kubectl get pods -n platform -l app.kubernetes.io/name=k8s-runner -o wide
+            echo "=== Pod describe ==="
+            kubectl describe pod -n platform -l app.kubernetes.io/name=k8s-runner
+            echo "=== Pod logs ==="
+            kubectl logs -n platform -l app.kubernetes.io/name=k8s-runner --tail=100 || true
+            echo "=== Events ==="
+            kubectl get events -n platform --sort-by='.lastTimestamp' | tail -20
+            exit 1
+          fi
 
       - name: Install DevSpace
         run: |
