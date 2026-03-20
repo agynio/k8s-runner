@@ -72,8 +72,8 @@ jobs:
 
       - name: Install DevSpace
         run: |
-          curl -L -o devspace "https://github.com/devspace-sh/devspace/releases/latest/download/devspace-linux-amd64"
-          sudo install -m 0755 devspace /usr/local/bin/devspace
+          curl -L -o /tmp/devspace "https://github.com/devspace-sh/devspace/releases/latest/download/devspace-linux-amd64"
+          sudo install -m 0755 /tmp/devspace /usr/local/bin/devspace
           devspace version
 
       - name: Run e2e tests
