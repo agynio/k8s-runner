@@ -86,6 +86,8 @@ deployments:
       values:
         containers:
           - image: ${E2E_IMAGE}
+            command: ["sleep"]
+            args: ["infinity"]
         labels:
           app.kubernetes.io/name: k8s-runner-e2e
 
@@ -127,7 +129,7 @@ pipelines:
     run: |-
       create_deployments e2e-runner
       start_dev e2e-runner &
-      sleep 5
+      wait_pod --label-selector "app.kubernetes.io/name=k8s-runner-e2e" -n ${K8S_RUNNER_NAMESPACE}
       exec_container \
         --label-selector "app.kubernetes.io/name=k8s-runner-e2e" \
         -n ${K8S_RUNNER_NAMESPACE} \
@@ -188,8 +190,6 @@ dev:
     namespace: ${K8S_RUNNER_NAMESPACE}
     labelSelector:
       app.kubernetes.io/name: k8s-runner-e2e
-    command: ["sleep", "infinity"]
-    workingDir: /opt/app/data
     sync:
       - path: ./:/opt/app/data
         excludePaths:
