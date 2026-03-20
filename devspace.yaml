@@ -127,6 +127,7 @@ pipelines:
     run: |-
       create_deployments e2e-runner
       start_dev e2e-runner &
+      sleep 5
       exec_container \
         --label-selector "app.kubernetes.io/name=k8s-runner-e2e" \
         -n ${K8S_RUNNER_NAMESPACE} \
