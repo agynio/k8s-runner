@@ -70,6 +70,25 @@ jobs:
       - name: Verify platform health
         run: bootstrap/.github/scripts/verify_platform_health.sh
 
+      - name: Build k8s-runner image
+        run: docker build -t k8s-runner:dev .
+
+      - name: Import image into k3d
+        run: k3d image import k8s-runner:dev -c agyn-local
+
+      - name: Create workloads namespace
+        run: kubectl create namespace agyn-workloads --dry-run=client -o yaml | kubectl apply -f -
+
+      - name: Install k8s-runner
+        run: |
+          helm dependency build charts/k8s-runner
+          helm install k8s-runner charts/k8s-runner \
+            -n platform \
+            --set image.repository=k8s-runner \
+            --set image.tag=dev \
+            --set image.pullPolicy=Never \
+            --wait --timeout 120s
+
       - name: Install DevSpace
         run: |
           curl -L -o /tmp/devspace "https://github.com/devspace-sh/devspace/releases/latest/download/devspace-linux-amd64"
