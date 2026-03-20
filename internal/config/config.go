@@ -39,9 +39,6 @@ func Load() (Config, error) {
 
 	cfg.ZitiIdentityFile = strings.TrimSpace(os.Getenv("ZITI_IDENTITY_FILE"))
 	cfg.ZitiServiceName = readEnv("ZITI_SERVICE_NAME", defaultZitiServiceName)
-	if cfg.ZitiIdentityFile == "" {
-		return Config{}, fmt.Errorf("ZITI_IDENTITY_FILE is required")
-	}
 
 	storageClass := strings.TrimSpace(os.Getenv("PVC_STORAGE_CLASS"))
 	if storageClass != "" {

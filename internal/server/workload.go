@@ -471,8 +471,6 @@ func mountsForPod(pod *corev1.Pod, mainContainerName string) []*runnerv1.TargetM
 			volumeSources[volume.Name] = volumeInfo{mountType: "pvc", source: volume.PersistentVolumeClaim.ClaimName}
 		case volume.EmptyDir != nil:
 			volumeSources[volume.Name] = volumeInfo{mountType: "emptydir", source: volume.Name}
-		default:
-			volumeSources[volume.Name] = volumeInfo{mountType: "unknown", source: volume.Name}
 		}
 	}
 

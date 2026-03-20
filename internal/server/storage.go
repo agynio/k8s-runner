@@ -82,6 +82,14 @@ func (s *Server) RemoveVolume(ctx context.Context, req *runnerv1.RemoveVolumeReq
 		return nil, status.Error(codes.InvalidArgument, "volume_name_required")
 	}
 
+	pvc, err := s.clientset.CoreV1().PersistentVolumeClaims(s.namespace).Get(ctx, volumeName, metav1.GetOptions{})
+	if err != nil {
+		return nil, grpcErrorFromKube(s.logger, err, codes.Internal)
+	}
+	if pvc.DeletionTimestamp != nil {
+		return nil, status.Error(codes.NotFound, "resource not found")
+	}
+
 	if err := s.clientset.CoreV1().PersistentVolumeClaims(s.namespace).Delete(ctx, volumeName, metav1.DeleteOptions{}); err != nil {
 		return nil, grpcErrorFromKube(s.logger, err, codes.Internal)
 	}

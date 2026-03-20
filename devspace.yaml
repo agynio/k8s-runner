@@ -86,12 +86,14 @@ deployments:
       values:
         containers:
           - image: ${E2E_IMAGE}
+            command: ["sleep"]
+            args: ["infinity"]
         labels:
           app.kubernetes.io/name: k8s-runner-e2e
 
 commands:
-  test:e2e: |-
-    devspace run-pipeline test:e2e $@
+  test-e2e: |-
+    devspace run-pipeline test-e2e $@
 
 pipelines:
   dev:
@@ -123,15 +125,22 @@ pipelines:
         stop_dev k8s-runner
       fi
 
-  test:e2e:
+  test-e2e:
     run: |-
       create_deployments e2e-runner
       start_dev e2e-runner &
-      sleep 5
+      wait_pod --label-selector "app.kubernetes.io/name=k8s-runner-e2e" -n ${K8S_RUNNER_NAMESPACE}
       exec_container \
         --label-selector "app.kubernetes.io/name=k8s-runner-e2e" \
         -n ${K8S_RUNNER_NAMESPACE} \
-        -- bash -c 'cd /opt/app/data && buf generate buf.build/agynio/api --path agynio/api/runner/v1 --template ./buf.gen.yaml && go test -v -count=1 -tags e2e ./test/e2e/'
+        -- bash -c '
+          elapsed=0
+          while [ ! -f /opt/app/data/go.mod ] || [ ! -f /opt/app/data/buf.gen.yaml ] || [ ! -f /opt/app/data/test/e2e/helpers_test.go ]; do
+            sleep 1; elapsed=$((elapsed + 1))
+            [ "$elapsed" -ge 120 ] && { echo "ERROR: sync timeout" >&2; exit 1; }
+          done
+          sleep 5
+          cd /opt/app/data && buf generate buf.build/agynio/api --path agynio/api/runner/v1 --template ./buf.gen.yaml && go test -v -count=1 -tags e2e ./test/e2e/'
       EXIT_CODE=$?
       stop_dev e2e-runner
       purge_deployments e2e-runner
@@ -182,8 +191,6 @@ dev:
     namespace: ${K8S_RUNNER_NAMESPACE}
     labelSelector:
       app.kubernetes.io/name: k8s-runner-e2e
-    command: ["sleep", "infinity"]
-    workingDir: /opt/app/data
     sync:
       - path: ./:/opt/app/data
         excludePaths:
