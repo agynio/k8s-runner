@@ -86,18 +86,20 @@ func run() error {
 	defer listener.Close()
 	startServe(listener, "tcp")
 
-	zitiContext, err := ziti.NewContextFromFile(cfg.ZitiIdentityFile)
-	if err != nil {
-		return fmt.Errorf("create ziti context: %w", err)
-	}
-	defer zitiContext.Close()
+	if cfg.ZitiIdentityFile != "" {
+		zitiContext, err := ziti.NewContextFromFile(cfg.ZitiIdentityFile)
+		if err != nil {
+			return fmt.Errorf("create ziti context: %w", err)
+		}
+		defer zitiContext.Close()
 
-	zitiListener, err := zitiContext.ListenWithOptions(cfg.ZitiServiceName, ziti.DefaultListenOptions())
-	if err != nil {
-		return fmt.Errorf("listen on ziti service %s: %w", cfg.ZitiServiceName, err)
+		zitiListener, err := zitiContext.ListenWithOptions(cfg.ZitiServiceName, ziti.DefaultListenOptions())
+		if err != nil {
+			return fmt.Errorf("listen on ziti service %s: %w", cfg.ZitiServiceName, err)
+		}
+		defer zitiListener.Close()
+		startServe(zitiListener, "ziti")
 	}
-	defer zitiListener.Close()
-	startServe(zitiListener, "ziti")
 
 	select {
 	case err := <-errCh:
