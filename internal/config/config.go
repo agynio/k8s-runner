@@ -3,27 +3,33 @@ package config
 import (
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
+	"time"
 
 	"k8s.io/apimachinery/pkg/api/resource"
 )
 
 const (
-	defaultGRPCAddr        = ":50051"
-	defaultZitiServiceName = "runner"
-	defaultStorageSize     = "10Gi"
-	defaultLogLevel        = "info"
+	defaultGRPCAddr                 = ":50051"
+	defaultZitiManagementAddress    = "ziti-management:50051"
+	defaultZitiLeaseRenewalInterval = 2 * time.Minute
+	defaultZitiServiceName          = "runner"
+	defaultStorageSize              = "10Gi"
+	defaultLogLevel                 = "info"
 )
 
 // Config captures runtime configuration derived from the environment.
 type Config struct {
-	GRPCAddr         string
-	Namespace        string
-	ZitiIdentityFile string
-	ZitiServiceName  string
-	StorageClass     *string
-	StorageSize      string
-	LogLevel         string
+	GRPCAddr                 string
+	Namespace                string
+	ZitiEnabled              bool
+	ZitiManagementAddress    string
+	ZitiLeaseRenewalInterval time.Duration
+	ZitiServiceName          string
+	StorageClass             *string
+	StorageSize              string
+	LogLevel                 string
 }
 
 // Load reads configuration from environment variables, applying defaults when
@@ -37,8 +43,27 @@ func Load() (Config, error) {
 		return Config{}, fmt.Errorf("KUBE_NAMESPACE is required")
 	}
 
-	cfg.ZitiIdentityFile = strings.TrimSpace(os.Getenv("ZITI_IDENTITY_FILE"))
-	cfg.ZitiServiceName = readEnv("ZITI_SERVICE_NAME", defaultZitiServiceName)
+	var err error
+	cfg.ZitiEnabled, err = readBool("ZITI_ENABLED", false)
+	if err != nil {
+		return Config{}, err
+	}
+
+	if cfg.ZitiEnabled {
+		cfg.ZitiManagementAddress = readEnv("ZITI_MANAGEMENT_ADDRESS", defaultZitiManagementAddress)
+		cfg.ZitiServiceName = readEnv("ZITI_SERVICE_NAME", defaultZitiServiceName)
+
+		leaseInterval, err := readDuration("ZITI_LEASE_RENEWAL_INTERVAL", defaultZitiLeaseRenewalInterval)
+		if err != nil {
+			return Config{}, err
+		}
+		if leaseInterval <= 0 {
+			return Config{}, fmt.Errorf("ZITI_LEASE_RENEWAL_INTERVAL must be greater than 0")
+		}
+		cfg.ZitiLeaseRenewalInterval = leaseInterval
+	} else {
+		cfg.ZitiServiceName = readEnv("ZITI_SERVICE_NAME", defaultZitiServiceName)
+	}
 
 	storageClass := strings.TrimSpace(os.Getenv("PVC_STORAGE_CLASS"))
 	if storageClass != "" {
@@ -60,6 +85,38 @@ func readEnv(key, def string) string {
 		return strings.TrimSpace(value)
 	}
 	return def
+}
+
+func readBool(key string, def bool) (bool, error) {
+	value, ok := os.LookupEnv(key)
+	if !ok {
+		return def, nil
+	}
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return false, fmt.Errorf("%s must be true or false", key)
+	}
+	parsed, err := strconv.ParseBool(trimmed)
+	if err != nil {
+		return false, fmt.Errorf("invalid %s: %w", key, err)
+	}
+	return parsed, nil
+}
+
+func readDuration(key string, def time.Duration) (time.Duration, error) {
+	value, ok := os.LookupEnv(key)
+	if !ok {
+		return def, nil
+	}
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return 0, fmt.Errorf("%s must be a duration", key)
+	}
+	parsed, err := time.ParseDuration(trimmed)
+	if err != nil {
+		return 0, fmt.Errorf("invalid %s: %w", key, err)
+	}
+	return parsed, nil
 }
 
 func normalizeLogLevel(level string) string {

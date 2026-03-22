@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
@@ -9,12 +10,15 @@ import (
 	"os/signal"
 	"sync"
 	"syscall"
+	"time"
 
 	"github.com/openziti/sdk-golang/ziti"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 
 	runnerv1 "github.com/agynio/k8s-runner/internal/.gen/agynio/api/runner/v1"
+	zitimgmtv1 "github.com/agynio/k8s-runner/internal/.gen/agynio/api/ziti_management/v1"
 	"github.com/agynio/k8s-runner/internal/config"
 	"github.com/agynio/k8s-runner/internal/kube"
 	"github.com/agynio/k8s-runner/internal/logging"
@@ -86,8 +90,27 @@ func run() error {
 	defer listener.Close()
 	startServe(listener, "tcp")
 
-	if cfg.ZitiIdentityFile != "" {
-		zitiContext, err := ziti.NewContextFromFile(cfg.ZitiIdentityFile)
+	if cfg.ZitiEnabled {
+		zitiConn, err := grpc.DialContext(ctx, cfg.ZitiManagementAddress, grpc.WithTransportCredentials(insecure.NewCredentials()))
+		if err != nil {
+			return fmt.Errorf("dial ziti management: %w", err)
+		}
+		defer zitiConn.Close()
+
+		zitiMgmtClient := zitimgmtv1.NewZitiManagementServiceClient(zitiConn)
+		identityResponse, err := zitiMgmtClient.RequestServiceIdentity(ctx, &zitimgmtv1.RequestServiceIdentityRequest{
+			ServiceType: zitimgmtv1.ServiceType_SERVICE_TYPE_RUNNER,
+		})
+		if err != nil {
+			return fmt.Errorf("request ziti service identity: %w", err)
+		}
+
+		zitiConfig := &ziti.Config{}
+		if err := json.Unmarshal(identityResponse.IdentityJson, zitiConfig); err != nil {
+			return fmt.Errorf("parse ziti identity: %w", err)
+		}
+
+		zitiContext, err := ziti.NewContext(zitiConfig)
 		if err != nil {
 			return fmt.Errorf("create ziti context: %w", err)
 		}
@@ -99,6 +122,8 @@ func run() error {
 		}
 		defer zitiListener.Close()
 		startServe(zitiListener, "ziti")
+
+		go renewLease(ctx, logger, zitiMgmtClient, identityResponse.ZitiIdentityId, cfg.ZitiLeaseRenewalInterval)
 	}
 
 	select {
@@ -113,4 +138,22 @@ func run() error {
 
 	wg.Wait()
 	return nil
+}
+
+func renewLease(ctx context.Context, logger *zap.Logger, client zitimgmtv1.ZitiManagementServiceClient, identityID string, interval time.Duration) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if ctx.Err() != nil {
+				return
+			}
+			if _, err := client.ExtendIdentityLease(ctx, &zitimgmtv1.ExtendIdentityLeaseRequest{ZitiIdentityId: identityID}); err != nil {
+				logger.Warn("failed to extend ziti lease", zap.Error(err))
+			}
+		}
+	}
 }
