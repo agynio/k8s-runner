@@ -22,7 +22,7 @@ jobs:
         uses: bufbuild/buf-setup-action@v1
 
       - name: Generate protobuf bindings
-        run: buf generate buf.build/agynio/api --path agynio/api/runner/v1 --template ./buf.gen.yaml
+        run: buf generate buf.build/agynio/api --path agynio/api/runner/v1 --path agynio/api/ziti_management/v1 --template ./buf.gen.yaml
 
       - name: Run tests
         run: go test ./...
