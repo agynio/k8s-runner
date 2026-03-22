@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
@@ -24,8 +25,6 @@ import (
 	"github.com/agynio/k8s-runner/internal/server"
 )
 
-var logger *zap.Logger
-
 func main() {
 	if err := run(); err != nil {
 		fmt.Fprintf(os.Stderr, "k8s-runner failed: %v\n", err)
@@ -42,7 +41,7 @@ func run() error {
 		return fmt.Errorf("load config: %w", err)
 	}
 
-	logger, err = logging.New(cfg.LogLevel)
+	logger, err := logging.New(cfg.LogLevel)
 	if err != nil {
 		return fmt.Errorf("init logger: %w", err)
 	}
@@ -106,26 +105,12 @@ func run() error {
 			return fmt.Errorf("request ziti service identity: %w", err)
 		}
 
-		identityFile, err := os.CreateTemp("", "k8s-runner-ziti-identity-*.json")
-		if err != nil {
-			return fmt.Errorf("create ziti identity file: %w", err)
-		}
-		identityPath := identityFile.Name()
-		defer func() {
-			if err := os.Remove(identityPath); err != nil && !errors.Is(err, os.ErrNotExist) {
-				logger.Warn("failed to remove ziti identity file", zap.Error(err))
-			}
-		}()
-
-		if _, err := identityFile.Write(identityResponse.IdentityJson); err != nil {
-			_ = identityFile.Close()
-			return fmt.Errorf("write ziti identity file: %w", err)
-		}
-		if err := identityFile.Close(); err != nil {
-			return fmt.Errorf("close ziti identity file: %w", err)
+		zitiConfig := &ziti.Config{}
+		if err := json.Unmarshal(identityResponse.IdentityJson, zitiConfig); err != nil {
+			return fmt.Errorf("parse ziti identity: %w", err)
 		}
 
-		zitiContext, err := ziti.NewContextFromFile(identityPath)
+		zitiContext, err := ziti.NewContext(zitiConfig)
 		if err != nil {
 			return fmt.Errorf("create ziti context: %w", err)
 		}
@@ -138,7 +123,7 @@ func run() error {
 		defer zitiListener.Close()
 		startServe(zitiListener, "ziti")
 
-		go renewLease(ctx, zitiMgmtClient, identityResponse.ZitiIdentityId, cfg.ZitiLeaseRenewalInterval)
+		go renewLease(ctx, logger, zitiMgmtClient, identityResponse.ZitiIdentityId, cfg.ZitiLeaseRenewalInterval)
 	}
 
 	select {
@@ -155,7 +140,7 @@ func run() error {
 	return nil
 }
 
-func renewLease(ctx context.Context, client zitimgmtv1.ZitiManagementServiceClient, identityID string, interval time.Duration) {
+func renewLease(ctx context.Context, logger *zap.Logger, client zitimgmtv1.ZitiManagementServiceClient, identityID string, interval time.Duration) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
@@ -163,6 +148,9 @@ func renewLease(ctx context.Context, client zitimgmtv1.ZitiManagementServiceClie
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			if ctx.Err() != nil {
+				return
+			}
 			if _, err := client.ExtendIdentityLease(ctx, &zitimgmtv1.ExtendIdentityLeaseRequest{ZitiIdentityId: identityID}); err != nil {
 				logger.Warn("failed to extend ziti lease", zap.Error(err))
 			}
