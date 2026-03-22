@@ -16,7 +16,7 @@ COPY --from=buf /usr/local/bin/buf /usr/local/bin/buf
 COPY go.mod go.sum ./
 RUN go mod download
 COPY buf.gen.yaml ./
-RUN buf generate buf.build/agynio/api --path agynio/api/runner/v1 --template ./buf.gen.yaml
+RUN buf generate buf.build/agynio/api --path agynio/api/runner/v1 --path agynio/api/ziti_management/v1 --template ./buf.gen.yaml
 COPY . .
 ARG TARGETOS TARGETARCH
 ENV CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH
