@@ -49,17 +49,21 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 
-	cfg.ZitiManagementAddress = readEnv("ZITI_MANAGEMENT_ADDRESS", defaultZitiManagementAddress)
-	cfg.ZitiServiceName = readEnv("ZITI_SERVICE_NAME", defaultZitiServiceName)
+	if cfg.ZitiEnabled {
+		cfg.ZitiManagementAddress = readEnv("ZITI_MANAGEMENT_ADDRESS", defaultZitiManagementAddress)
+		cfg.ZitiServiceName = readEnv("ZITI_SERVICE_NAME", defaultZitiServiceName)
 
-	leaseInterval, err := readDuration("ZITI_LEASE_RENEWAL_INTERVAL", defaultZitiLeaseRenewalInterval)
-	if err != nil {
-		return Config{}, err
+		leaseInterval, err := readDuration("ZITI_LEASE_RENEWAL_INTERVAL", defaultZitiLeaseRenewalInterval)
+		if err != nil {
+			return Config{}, err
+		}
+		if leaseInterval <= 0 {
+			return Config{}, fmt.Errorf("ZITI_LEASE_RENEWAL_INTERVAL must be greater than 0")
+		}
+		cfg.ZitiLeaseRenewalInterval = leaseInterval
+	} else {
+		cfg.ZitiServiceName = readEnv("ZITI_SERVICE_NAME", defaultZitiServiceName)
 	}
-	if leaseInterval <= 0 {
-		return Config{}, fmt.Errorf("ZITI_LEASE_RENEWAL_INTERVAL must be greater than 0")
-	}
-	cfg.ZitiLeaseRenewalInterval = leaseInterval
 
 	storageClass := strings.TrimSpace(os.Getenv("PVC_STORAGE_CLASS"))
 	if storageClass != "" {
