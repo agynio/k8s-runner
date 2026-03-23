@@ -45,6 +45,28 @@ func (s *Server) StartWorkload(ctx context.Context, req *runnerv1.StartWorkloadR
 		return nil, err
 	}
 
+	volumeLookup := make(map[string]struct{}, len(volumes))
+	for _, volume := range volumes {
+		volumeLookup[volume.Name] = struct{}{}
+	}
+
+	initContainers := make([]corev1.Container, 0, len(req.InitContainers))
+	nameLookup := make(map[string]struct{}, len(containers)+len(req.InitContainers))
+	for _, container := range containers {
+		nameLookup[container.Name] = struct{}{}
+	}
+	for idx, initContainer := range req.InitContainers {
+		container, err := buildContainer(initContainer, fmt.Sprintf("init-%d", idx+1), volumeLookup)
+		if err != nil {
+			return nil, err
+		}
+		if _, exists := nameLookup[container.Name]; exists {
+			return nil, status.Errorf(codes.InvalidArgument, "duplicate_container_name: %s", container.Name)
+		}
+		nameLookup[container.Name] = struct{}{}
+		initContainers = append(initContainers, container)
+	}
+
 	annotations := map[string]string{}
 	if len(pvcNames) > 0 {
 		annotations[pvcAnnotationKey] = strings.Join(pvcNames, ",")
@@ -58,9 +80,10 @@ func (s *Server) StartWorkload(ctx context.Context, req *runnerv1.StartWorkloadR
 			Annotations: annotations,
 		},
 		Spec: corev1.PodSpec{
-			RestartPolicy: corev1.RestartPolicyNever,
-			Containers:    containers,
-			Volumes:       volumes,
+			RestartPolicy:  corev1.RestartPolicyNever,
+			InitContainers: initContainers,
+			Containers:     containers,
+			Volumes:        volumes,
 		},
 	}
 

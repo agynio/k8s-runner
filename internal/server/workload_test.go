@@ -1,12 +1,16 @@
 package server
 
 import (
+	"context"
 	"reflect"
 	"strings"
 	"testing"
 
+	"go.uber.org/zap"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes/fake"
 
 	runnerv1 "github.com/agynio/k8s-runner/internal/.gen/agynio/api/runner/v1"
 )
@@ -112,6 +116,53 @@ func TestBuildContainersRejectsEntrypointWithSpaces(t *testing.T) {
 	}
 	if !strings.Contains(st.Message(), "entrypoint_must_be_single_path") {
 		t.Fatalf("expected entrypoint error message, got %q", st.Message())
+	}
+}
+
+func TestStartWorkloadBuildsInitContainers(t *testing.T) {
+	clientset := fake.NewSimpleClientset()
+	server := New(Options{
+		Clientset:   clientset,
+		Namespace:   "default",
+		StorageSize: "1Gi",
+		Logger:      zap.NewNop(),
+	})
+
+	ctx := context.Background()
+	req := &runnerv1.StartWorkloadRequest{
+		Main: &runnerv1.ContainerSpec{Name: "main", Image: "busybox"},
+		InitContainers: []*runnerv1.ContainerSpec{
+			{Image: "alpine"},
+			{Name: "init-setup", Image: "busybox", Cmd: []string{"echo", "ready"}},
+		},
+	}
+
+	resp, err := server.StartWorkload(ctx, req)
+	if err != nil {
+		t.Fatalf("StartWorkload returned error: %v", err)
+	}
+	if resp == nil || resp.Id == "" {
+		t.Fatalf("expected response with id")
+	}
+
+	pod, err := clientset.CoreV1().Pods("default").Get(ctx, resp.Id, metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("expected pod created: %v", err)
+	}
+	if len(pod.Spec.InitContainers) != 2 {
+		t.Fatalf("expected 2 init containers, got %d", len(pod.Spec.InitContainers))
+	}
+	if pod.Spec.InitContainers[0].Name != "init-1" {
+		t.Fatalf("expected fallback init container name, got %q", pod.Spec.InitContainers[0].Name)
+	}
+	if pod.Spec.InitContainers[0].Image != "alpine" {
+		t.Fatalf("expected init container image alpine, got %q", pod.Spec.InitContainers[0].Image)
+	}
+	if pod.Spec.InitContainers[1].Name != "init-setup" {
+		t.Fatalf("expected init container name init-setup, got %q", pod.Spec.InitContainers[1].Name)
+	}
+	if !reflect.DeepEqual(pod.Spec.InitContainers[1].Args, []string{"echo", "ready"}) {
+		t.Fatalf("expected init container args, got %#v", pod.Spec.InitContainers[1].Args)
 	}
 }
 
