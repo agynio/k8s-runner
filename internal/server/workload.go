@@ -40,31 +40,9 @@ func (s *Server) StartWorkload(ctx context.Context, req *runnerv1.StartWorkloadR
 		return nil, err
 	}
 
-	containers, sidecarNames, err := buildContainers(req, volumes)
+	containers, initContainers, sidecarNames, err := buildContainers(req, volumes)
 	if err != nil {
 		return nil, err
-	}
-
-	volumeLookup := make(map[string]struct{}, len(volumes))
-	for _, volume := range volumes {
-		volumeLookup[volume.Name] = struct{}{}
-	}
-
-	initContainers := make([]corev1.Container, 0, len(req.InitContainers))
-	nameLookup := make(map[string]struct{}, len(containers)+len(req.InitContainers))
-	for _, container := range containers {
-		nameLookup[container.Name] = struct{}{}
-	}
-	for idx, initContainer := range req.InitContainers {
-		container, err := buildContainer(initContainer, fmt.Sprintf("init-%d", idx+1), volumeLookup)
-		if err != nil {
-			return nil, err
-		}
-		if _, exists := nameLookup[container.Name]; exists {
-			return nil, status.Errorf(codes.InvalidArgument, "duplicate_container_name: %s", container.Name)
-		}
-		nameLookup[container.Name] = struct{}{}
-		initContainers = append(initContainers, container)
 	}
 
 	annotations := map[string]string{}
@@ -353,18 +331,19 @@ func (s *Server) ensurePVC(ctx context.Context, volume *runnerv1.VolumeSpec, lab
 	return pvcName, nil
 }
 
-func buildContainers(req *runnerv1.StartWorkloadRequest, volumes []corev1.Volume) ([]corev1.Container, []string, error) {
+func buildContainers(req *runnerv1.StartWorkloadRequest, volumes []corev1.Volume) ([]corev1.Container, []corev1.Container, []string, error) {
 	volumeLookup := make(map[string]struct{}, len(volumes))
 	for _, volume := range volumes {
 		volumeLookup[volume.Name] = struct{}{}
 	}
 
 	containers := make([]corev1.Container, 0, 1+len(req.Sidecars))
-	nameLookup := make(map[string]struct{})
+	initContainers := make([]corev1.Container, 0, len(req.InitContainers))
+	nameLookup := make(map[string]struct{}, 1+len(req.Sidecars)+len(req.InitContainers))
 
 	mainContainer, err := buildContainer(req.Main, "main", volumeLookup)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	containers = append(containers, mainContainer)
 	nameLookup[mainContainer.Name] = struct{}{}
@@ -373,17 +352,29 @@ func buildContainers(req *runnerv1.StartWorkloadRequest, volumes []corev1.Volume
 	for idx, sidecar := range req.Sidecars {
 		container, err := buildContainer(sidecar, fmt.Sprintf("sidecar-%d", idx+1), volumeLookup)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 		if _, exists := nameLookup[container.Name]; exists {
-			return nil, nil, status.Errorf(codes.InvalidArgument, "duplicate_container_name: %s", container.Name)
+			return nil, nil, nil, status.Errorf(codes.InvalidArgument, "duplicate_container_name: %s", container.Name)
 		}
 		nameLookup[container.Name] = struct{}{}
 		containers = append(containers, container)
 		sidecarNames = append(sidecarNames, container.Name)
 	}
 
-	return containers, sidecarNames, nil
+	for idx, initContainer := range req.InitContainers {
+		container, err := buildContainer(initContainer, fmt.Sprintf("init-%d", idx+1), volumeLookup)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		if _, exists := nameLookup[container.Name]; exists {
+			return nil, nil, nil, status.Errorf(codes.InvalidArgument, "duplicate_container_name: %s", container.Name)
+		}
+		nameLookup[container.Name] = struct{}{}
+		initContainers = append(initContainers, container)
+	}
+
+	return containers, initContainers, sidecarNames, nil
 }
 
 func buildContainer(spec *runnerv1.ContainerSpec, fallbackName string, volumeLookup map[string]struct{}) (corev1.Container, error) {

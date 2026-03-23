@@ -54,12 +54,15 @@ func TestBuildContainersMapsMainSpec(t *testing.T) {
 		},
 	}
 
-	containers, sidecars, err := buildContainers(req, nil)
+	containers, initContainers, sidecars, err := buildContainers(req, nil)
 	if err != nil {
 		t.Fatalf("buildContainers returned error: %v", err)
 	}
 	if len(sidecars) != 0 {
 		t.Fatalf("expected no sidecars, got %d", len(sidecars))
+	}
+	if len(initContainers) != 0 {
+		t.Fatalf("expected no init containers, got %d", len(initContainers))
 	}
 	if len(containers) != 1 {
 		t.Fatalf("expected 1 container, got %d", len(containers))
@@ -88,7 +91,7 @@ func TestBuildContainersRejectsDuplicateNames(t *testing.T) {
 		},
 	}
 
-	_, _, err := buildContainers(req, nil)
+	_, _, _, err := buildContainers(req, nil)
 	if err == nil {
 		t.Fatalf("expected duplicate container error")
 	}
@@ -106,7 +109,7 @@ func TestBuildContainersRejectsEntrypointWithSpaces(t *testing.T) {
 		Main: &runnerv1.ContainerSpec{Name: "main", Image: "busybox", Entrypoint: "/bin/sh -c"},
 	}
 
-	_, _, err := buildContainers(req, nil)
+	_, _, _, err := buildContainers(req, nil)
 	if err == nil {
 		t.Fatalf("expected entrypoint validation error")
 	}
@@ -116,6 +119,49 @@ func TestBuildContainersRejectsEntrypointWithSpaces(t *testing.T) {
 	}
 	if !strings.Contains(st.Message(), "entrypoint_must_be_single_path") {
 		t.Fatalf("expected entrypoint error message, got %q", st.Message())
+	}
+}
+
+func TestBuildContainersRejectsInitDuplicateNameWithMain(t *testing.T) {
+	req := &runnerv1.StartWorkloadRequest{
+		Main: &runnerv1.ContainerSpec{Name: "main", Image: "busybox"},
+		InitContainers: []*runnerv1.ContainerSpec{
+			{Name: "main", Image: "alpine"},
+		},
+	}
+
+	_, _, _, err := buildContainers(req, nil)
+	if err == nil {
+		t.Fatalf("expected duplicate container error")
+	}
+	st, ok := status.FromError(err)
+	if !ok || st.Code() != codes.InvalidArgument {
+		t.Fatalf("expected invalid argument error, got %v", err)
+	}
+	if !strings.Contains(st.Message(), "duplicate_container_name") {
+		t.Fatalf("expected duplicate container error message, got %q", st.Message())
+	}
+}
+
+func TestBuildContainersRejectsInitDuplicateNames(t *testing.T) {
+	req := &runnerv1.StartWorkloadRequest{
+		Main: &runnerv1.ContainerSpec{Name: "main", Image: "busybox"},
+		InitContainers: []*runnerv1.ContainerSpec{
+			{Name: "setup", Image: "busybox"},
+			{Name: "setup", Image: "alpine"},
+		},
+	}
+
+	_, _, _, err := buildContainers(req, nil)
+	if err == nil {
+		t.Fatalf("expected duplicate container error")
+	}
+	st, ok := status.FromError(err)
+	if !ok || st.Code() != codes.InvalidArgument {
+		t.Fatalf("expected invalid argument error, got %v", err)
+	}
+	if !strings.Contains(st.Message(), "duplicate_container_name") {
+		t.Fatalf("expected duplicate container error message, got %q", st.Message())
 	}
 }
 
