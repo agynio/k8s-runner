@@ -127,6 +127,20 @@ func TestBuildContainerOmitsSecurityContextWithoutRequiredCapabilities(t *testin
 	}
 }
 
+func TestBuildContainerOmitsSecurityContextForWhitespaceCapabilities(t *testing.T) {
+	container, err := buildContainer(&runnerv1.ContainerSpec{
+		Name:                 "main",
+		Image:                "busybox",
+		RequiredCapabilities: []string{" ", ""},
+	}, "main", map[string]struct{}{})
+	if err != nil {
+		t.Fatalf("buildContainer returned error: %v", err)
+	}
+	if container.SecurityContext != nil {
+		t.Fatalf("expected no security context when capabilities are whitespace-only")
+	}
+}
+
 func TestBuildContainersRejectsDuplicateNames(t *testing.T) {
 	req := &runnerv1.StartWorkloadRequest{
 		Main: &runnerv1.ContainerSpec{Name: "main", Image: "busybox"},

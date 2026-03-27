@@ -458,11 +458,11 @@ func buildContainer(spec *runnerv1.ContainerSpec, fallbackName string, volumeLoo
 	if len(spec.RequiredCapabilities) > 0 {
 		caps := make([]corev1.Capability, 0, len(spec.RequiredCapabilities))
 		for _, capability := range spec.RequiredCapabilities {
-			name := strings.TrimSpace(capability)
-			if name == "" {
+			capName := strings.TrimSpace(capability)
+			if capName == "" {
 				continue
 			}
-			caps = append(caps, corev1.Capability(name))
+			caps = append(caps, corev1.Capability(capName))
 		}
 		if len(caps) > 0 {
 			container.SecurityContext = &corev1.SecurityContext{
