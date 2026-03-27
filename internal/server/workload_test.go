@@ -9,6 +9,7 @@ import (
 	"go.uber.org/zap"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
 
@@ -83,6 +84,63 @@ func TestBuildContainersMapsMainSpec(t *testing.T) {
 	}
 }
 
+func TestBuildContainerMapsRequiredCapabilities(t *testing.T) {
+	container, err := buildContainer(&runnerv1.ContainerSpec{
+		Name:                 "main",
+		Image:                "busybox",
+		RequiredCapabilities: []string{"NET_ADMIN"},
+	}, "main", map[string]struct{}{})
+	if err != nil {
+		t.Fatalf("buildContainer returned error: %v", err)
+	}
+	if container.SecurityContext == nil || container.SecurityContext.Capabilities == nil {
+		t.Fatalf("expected security context capabilities")
+	}
+	expected := []corev1.Capability{"NET_ADMIN"}
+	if !reflect.DeepEqual(container.SecurityContext.Capabilities.Add, expected) {
+		t.Fatalf("expected capabilities %#v, got %#v", expected, container.SecurityContext.Capabilities.Add)
+	}
+}
+
+func TestBuildContainerOmitsSecurityContextWithoutRequiredCapabilities(t *testing.T) {
+	container, err := buildContainer(&runnerv1.ContainerSpec{
+		Name:  "main",
+		Image: "busybox",
+	}, "main", map[string]struct{}{})
+	if err != nil {
+		t.Fatalf("buildContainer returned error: %v", err)
+	}
+	if container.SecurityContext != nil {
+		t.Fatalf("expected no security context when capabilities are nil")
+	}
+
+	container, err = buildContainer(&runnerv1.ContainerSpec{
+		Name:                 "main",
+		Image:                "busybox",
+		RequiredCapabilities: []string{},
+	}, "main", map[string]struct{}{})
+	if err != nil {
+		t.Fatalf("buildContainer returned error: %v", err)
+	}
+	if container.SecurityContext != nil {
+		t.Fatalf("expected no security context when capabilities are empty")
+	}
+}
+
+func TestBuildContainerOmitsSecurityContextForWhitespaceCapabilities(t *testing.T) {
+	container, err := buildContainer(&runnerv1.ContainerSpec{
+		Name:                 "main",
+		Image:                "busybox",
+		RequiredCapabilities: []string{" ", ""},
+	}, "main", map[string]struct{}{})
+	if err != nil {
+		t.Fatalf("buildContainer returned error: %v", err)
+	}
+	if container.SecurityContext != nil {
+		t.Fatalf("expected no security context when capabilities are whitespace-only")
+	}
+}
+
 func TestBuildContainersRejectsDuplicateNames(t *testing.T) {
 	req := &runnerv1.StartWorkloadRequest{
 		Main: &runnerv1.ContainerSpec{Name: "main", Image: "busybox"},
@@ -119,6 +177,49 @@ func TestBuildContainersRejectsEntrypointWithSpaces(t *testing.T) {
 	}
 	if !strings.Contains(st.Message(), "entrypoint_must_be_single_path") {
 		t.Fatalf("expected entrypoint error message, got %q", st.Message())
+	}
+}
+
+func TestBuildContainersMapsInitRestartPolicy(t *testing.T) {
+	req := &runnerv1.StartWorkloadRequest{
+		Main: &runnerv1.ContainerSpec{Name: "main", Image: "busybox"},
+		InitContainers: []*runnerv1.ContainerSpec{
+			{Name: "setup", Image: "alpine", AdditionalProperties: map[string]string{"restart_policy": "Always"}},
+		},
+	}
+
+	_, initContainers, _, err := buildContainers(req, nil)
+	if err != nil {
+		t.Fatalf("buildContainers returned error: %v", err)
+	}
+	if len(initContainers) != 1 {
+		t.Fatalf("expected 1 init container, got %d", len(initContainers))
+	}
+	if initContainers[0].RestartPolicy == nil {
+		t.Fatalf("expected init container restart policy to be set")
+	}
+	if *initContainers[0].RestartPolicy != corev1.ContainerRestartPolicyAlways {
+		t.Fatalf("expected restart policy Always, got %q", *initContainers[0].RestartPolicy)
+	}
+}
+
+func TestBuildContainersOmitsInitRestartPolicy(t *testing.T) {
+	req := &runnerv1.StartWorkloadRequest{
+		Main: &runnerv1.ContainerSpec{Name: "main", Image: "busybox"},
+		InitContainers: []*runnerv1.ContainerSpec{
+			{Name: "setup", Image: "alpine"},
+		},
+	}
+
+	_, initContainers, _, err := buildContainers(req, nil)
+	if err != nil {
+		t.Fatalf("buildContainers returned error: %v", err)
+	}
+	if len(initContainers) != 1 {
+		t.Fatalf("expected 1 init container, got %d", len(initContainers))
+	}
+	if initContainers[0].RestartPolicy != nil {
+		t.Fatalf("expected init container restart policy to be nil")
 	}
 }
 
@@ -209,6 +310,50 @@ func TestStartWorkloadBuildsInitContainers(t *testing.T) {
 	}
 	if !reflect.DeepEqual(pod.Spec.InitContainers[1].Args, []string{"echo", "ready"}) {
 		t.Fatalf("expected init container args, got %#v", pod.Spec.InitContainers[1].Args)
+	}
+}
+
+func TestStartWorkloadMapsDnsConfig(t *testing.T) {
+	clientset := fake.NewSimpleClientset()
+	server := New(Options{
+		Clientset:   clientset,
+		Namespace:   "default",
+		StorageSize: "1Gi",
+		Logger:      zap.NewNop(),
+	})
+
+	ctx := context.Background()
+	req := &runnerv1.StartWorkloadRequest{
+		Main: &runnerv1.ContainerSpec{Name: "main", Image: "busybox"},
+		DnsConfig: &runnerv1.DnsConfig{
+			Nameservers: []string{"127.0.0.1", "10.96.0.10"},
+			Searches:    []string{"svc.cluster.local"},
+		},
+	}
+
+	resp, err := server.StartWorkload(ctx, req)
+	if err != nil {
+		t.Fatalf("StartWorkload returned error: %v", err)
+	}
+	if resp == nil || resp.Id == "" {
+		t.Fatalf("expected response with id")
+	}
+
+	pod, err := clientset.CoreV1().Pods("default").Get(ctx, resp.Id, metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("expected pod created: %v", err)
+	}
+	if pod.Spec.DNSPolicy != corev1.DNSNone {
+		t.Fatalf("expected DNSPolicy None, got %q", pod.Spec.DNSPolicy)
+	}
+	if pod.Spec.DNSConfig == nil {
+		t.Fatalf("expected DNSConfig to be set")
+	}
+	if !reflect.DeepEqual(pod.Spec.DNSConfig.Nameservers, req.DnsConfig.Nameservers) {
+		t.Fatalf("expected nameservers %#v, got %#v", req.DnsConfig.Nameservers, pod.Spec.DNSConfig.Nameservers)
+	}
+	if !reflect.DeepEqual(pod.Spec.DNSConfig.Searches, req.DnsConfig.Searches) {
+		t.Fatalf("expected searches %#v, got %#v", req.DnsConfig.Searches, pod.Spec.DNSConfig.Searches)
 	}
 }
 

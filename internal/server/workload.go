@@ -65,6 +65,14 @@ func (s *Server) StartWorkload(ctx context.Context, req *runnerv1.StartWorkloadR
 		},
 	}
 
+	if req.DnsConfig != nil && len(req.DnsConfig.Nameservers) > 0 {
+		pod.Spec.DNSPolicy = corev1.DNSNone
+		pod.Spec.DNSConfig = &corev1.PodDNSConfig{
+			Nameservers: req.DnsConfig.Nameservers,
+			Searches:    req.DnsConfig.Searches,
+		}
+	}
+
 	if _, err := s.clientset.CoreV1().Pods(s.namespace).Create(ctx, pod, metav1.CreateOptions{}); err != nil {
 		return nil, grpcErrorFromKube(s.logger, err, codes.Internal)
 	}
@@ -445,6 +453,29 @@ func buildContainer(spec *runnerv1.ContainerSpec, fallbackName string, volumeLoo
 		}
 		// Entrypoint is a single binary path; use Cmd for args.
 		container.Command = []string{entrypoint}
+	}
+
+	if len(spec.RequiredCapabilities) > 0 {
+		caps := make([]corev1.Capability, 0, len(spec.RequiredCapabilities))
+		for _, capability := range spec.RequiredCapabilities {
+			capName := strings.TrimSpace(capability)
+			if capName == "" {
+				continue
+			}
+			caps = append(caps, corev1.Capability(capName))
+		}
+		if len(caps) > 0 {
+			container.SecurityContext = &corev1.SecurityContext{
+				Capabilities: &corev1.Capabilities{
+					Add: caps,
+				},
+			}
+		}
+	}
+
+	if policy, ok := spec.AdditionalProperties["restart_policy"]; ok && policy == "Always" {
+		always := corev1.ContainerRestartPolicyAlways
+		container.RestartPolicy = &always
 	}
 
 	return container, nil
