@@ -50,8 +50,6 @@ func (s *Server) StartWorkload(ctx context.Context, req *runnerv1.StartWorkloadR
 		annotations[pvcAnnotationKey] = strings.Join(pvcNames, ",")
 	}
 
-	// TODO(k8s-runner#19): Map req.DnsConfig to pod.Spec.DNSPolicy + pod.Spec.DNSConfig
-	// once agynio/api#70 (DnsConfig proto field) is published to BSR.
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:        workloadID,
@@ -65,6 +63,14 @@ func (s *Server) StartWorkload(ctx context.Context, req *runnerv1.StartWorkloadR
 			Containers:     containers,
 			Volumes:        volumes,
 		},
+	}
+
+	if req.DnsConfig != nil && len(req.DnsConfig.Nameservers) > 0 {
+		pod.Spec.DNSPolicy = corev1.DNSNone
+		pod.Spec.DNSConfig = &corev1.PodDNSConfig{
+			Nameservers: req.DnsConfig.Nameservers,
+			Searches:    req.DnsConfig.Searches,
+		}
 	}
 
 	if _, err := s.clientset.CoreV1().Pods(s.namespace).Create(ctx, pod, metav1.CreateOptions{}); err != nil {

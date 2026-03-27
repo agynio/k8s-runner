@@ -299,6 +299,50 @@ func TestStartWorkloadBuildsInitContainers(t *testing.T) {
 	}
 }
 
+func TestStartWorkloadMapsDnsConfig(t *testing.T) {
+	clientset := fake.NewSimpleClientset()
+	server := New(Options{
+		Clientset:   clientset,
+		Namespace:   "default",
+		StorageSize: "1Gi",
+		Logger:      zap.NewNop(),
+	})
+
+	ctx := context.Background()
+	req := &runnerv1.StartWorkloadRequest{
+		Main: &runnerv1.ContainerSpec{Name: "main", Image: "busybox"},
+		DnsConfig: &runnerv1.DnsConfig{
+			Nameservers: []string{"127.0.0.1", "10.96.0.10"},
+			Searches:    []string{"svc.cluster.local"},
+		},
+	}
+
+	resp, err := server.StartWorkload(ctx, req)
+	if err != nil {
+		t.Fatalf("StartWorkload returned error: %v", err)
+	}
+	if resp == nil || resp.Id == "" {
+		t.Fatalf("expected response with id")
+	}
+
+	pod, err := clientset.CoreV1().Pods("default").Get(ctx, resp.Id, metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("expected pod created: %v", err)
+	}
+	if pod.Spec.DNSPolicy != corev1.DNSNone {
+		t.Fatalf("expected DNSPolicy None, got %q", pod.Spec.DNSPolicy)
+	}
+	if pod.Spec.DNSConfig == nil {
+		t.Fatalf("expected DNSConfig to be set")
+	}
+	if !reflect.DeepEqual(pod.Spec.DNSConfig.Nameservers, req.DnsConfig.Nameservers) {
+		t.Fatalf("expected nameservers %#v, got %#v", req.DnsConfig.Nameservers, pod.Spec.DNSConfig.Nameservers)
+	}
+	if !reflect.DeepEqual(pod.Spec.DNSConfig.Searches, req.DnsConfig.Searches) {
+		t.Fatalf("expected searches %#v, got %#v", req.DnsConfig.Searches, pod.Spec.DNSConfig.Searches)
+	}
+}
+
 func TestParsePVCAnnotation(t *testing.T) {
 	if got := parsePVCAnnotation(nil); got != nil {
 		t.Fatalf("expected nil for nil annotations, got %#v", got)
