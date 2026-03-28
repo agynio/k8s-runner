@@ -23,6 +23,7 @@ const (
 type Config struct {
 	GRPCAddr                 string
 	Namespace                string
+	RunnerID                 string
 	ZitiEnabled              bool
 	ZitiManagementAddress    string
 	ZitiLeaseRenewalInterval time.Duration
@@ -41,6 +42,11 @@ func Load() (Config, error) {
 	cfg.Namespace = strings.TrimSpace(os.Getenv("KUBE_NAMESPACE"))
 	if cfg.Namespace == "" {
 		return Config{}, fmt.Errorf("KUBE_NAMESPACE is required")
+	}
+
+	cfg.RunnerID = strings.TrimSpace(os.Getenv("RUNNER_ID"))
+	if cfg.RunnerID == "" {
+		return Config{}, fmt.Errorf("RUNNER_ID is required")
 	}
 
 	var err error
