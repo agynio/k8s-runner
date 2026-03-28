@@ -27,59 +27,51 @@ functions:
     fi
   patch_deployment: |-
     echo "Patching k8s-runner deployment for DevSpace..."
-    kubectl patch deployment k8s-runner -n ${K8S_RUNNER_NAMESPACE} --type strategic --patch "$(cat <<'EOF'
-    spec:
-      template:
-        spec:
-          securityContext:
-            runAsUser: 1000
-            fsGroup: 1000
-          initContainers: []
-          volumes:
-            - name: data
-              emptyDir: {}
-          containers:
-            - name: k8s-runner
-              image: ghcr.io/agynio/devcontainer-go:1 # keep in sync with E2E_IMAGE
-              workingDir: /opt/app/data
-              command:
-                - sh
-                - -c
-                - |
-                  set -eu
-                  elapsed=0
-                  while [ ! -f /opt/app/data/go.mod ]; do
-                    sleep 1; elapsed=$((elapsed + 1))
-                    [ "$elapsed" -ge 120 ] && { echo "ERROR: sync timeout" >&2; exit 1; }
-                  done
-                  exec /opt/app/data/scripts/devspace-startup.sh
-              volumeMounts:
-                - name: data
-                  mountPath: /opt/app/data
-              resources:
-                requests:
-                  cpu: 500m
-                  memory: 1Gi
-                limits:
-                  cpu: "2"
-                  memory: 4Gi
-              securityContext:
-                runAsNonRoot: true
-                runAsUser: 1000
-                runAsGroup: 1000
-                readOnlyRootFilesystem: false
-                allowPrivilegeEscalation: false
-                capabilities:
-                  drop: ["ALL"]
-                seccompProfile:
-                  type: RuntimeDefault
-    EOF
-    )"
-    echo "Removing probes from k8s-runner deployment..."
-    kubectl patch deployment k8s-runner -n ${K8S_RUNNER_NAMESPACE} --type json --patch '[
+    kubectl patch deployment k8s-runner -n ${K8S_RUNNER_NAMESPACE} --type json --patch "$(cat <<'PATCH'
+    [
+      {"op": "add", "path": "/spec/template/spec/containers/0/image",
+       "value": "ghcr.io/agynio/devcontainer-go:1"},
+
+      {"op": "add", "path": "/spec/template/spec/containers/0/workingDir",
+       "value": "/opt/app/data"},
+
+      {"op": "add", "path": "/spec/template/spec/containers/0/command",
+       "value": ["sh", "-c", "set -eu\nelapsed=0\nwhile [ ! -f /opt/app/data/go.mod ]; do\n  sleep 1; elapsed=$((elapsed + 1))\n  [ \\\"$elapsed\\\" -ge 120 ] && { echo \\\"ERROR: sync timeout\\\" >&2; exit 1; }\ndone\nexec /opt/app/data/scripts/devspace-startup.sh"]},
+
+      {"op": "add", "path": "/spec/template/spec/containers/0/volumeMounts",
+       "value": [{"name": "data", "mountPath": "/opt/app/data"}]},
+
+      {"op": "add", "path": "/spec/template/spec/containers/0/resources",
+       "value": {
+         "requests": {"cpu": "500m", "memory": "1Gi"},
+         "limits": {"cpu": "2", "memory": "4Gi"}
+       }},
+
+      {"op": "add", "path": "/spec/template/spec/containers/0/securityContext",
+       "value": {
+         "runAsNonRoot": true,
+         "runAsUser": 1000,
+         "runAsGroup": 1000,
+         "readOnlyRootFilesystem": false,
+         "allowPrivilegeEscalation": false,
+         "capabilities": {"drop": ["ALL"]},
+         "seccompProfile": {"type": "RuntimeDefault"}
+       }},
+
       {"op": "remove", "path": "/spec/template/spec/containers/0/livenessProbe"},
-      {"op": "remove", "path": "/spec/template/spec/containers/0/readinessProbe"}
-    ]'
+      {"op": "remove", "path": "/spec/template/spec/containers/0/readinessProbe"},
+
+      {"op": "add", "path": "/spec/template/spec/volumes",
+       "value": [{"name": "data", "emptyDir": {}}]},
+
+      {"op": "add", "path": "/spec/template/spec/securityContext",
+       "value": {"runAsUser": 1000, "fsGroup": 1000}},
+
+      {"op": "add", "path": "/spec/template/spec/initContainers",
+       "value": []}
+    ]
+    PATCH
+    )"
   wait_for_k8s_runner: |-
     echo "Waiting for k8s-runner deployment to roll out..."
     kubectl rollout status deployment/k8s-runner \
