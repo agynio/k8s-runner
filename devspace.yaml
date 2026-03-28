@@ -73,11 +73,13 @@ functions:
                   drop: ["ALL"]
                 seccompProfile:
                   type: RuntimeDefault
-              livenessProbe: null
-              readinessProbe: null
-              startupProbe: null
     EOF
     )"
+    echo "Removing probes from k8s-runner deployment..."
+    kubectl patch deployment k8s-runner -n ${K8S_RUNNER_NAMESPACE} --type json --patch '[
+      {"op": "remove", "path": "/spec/template/spec/containers/0/livenessProbe"},
+      {"op": "remove", "path": "/spec/template/spec/containers/0/readinessProbe"}
+    ]'
   wait_for_k8s_runner: |-
     echo "Waiting for k8s-runner deployment to roll out..."
     kubectl rollout status deployment/k8s-runner \
