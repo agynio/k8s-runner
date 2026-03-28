@@ -73,6 +73,9 @@ functions:
                   drop: ["ALL"]
                 seccompProfile:
                   type: RuntimeDefault
+              livenessProbe: null
+              readinessProbe: null
+              startupProbe: null
     EOF
     )"
   wait_for_k8s_runner: |-
