@@ -70,44 +70,19 @@ jobs:
       - name: Verify platform health
         run: bootstrap/.github/scripts/verify_platform_health.sh
 
-      - name: Build k8s-runner image
-        run: docker build -t k8s-runner:dev .
-
-      - name: Import image into k3d
-        run: k3d image import k8s-runner:dev -c agyn-local
-
-      - name: Create workloads namespace
-        run: kubectl create namespace agyn-workloads --dry-run=client -o yaml | kubectl apply -f -
-
-      - name: Install k8s-runner
-        run: |
-          helm dependency build charts/k8s-runner
-          helm install k8s-runner charts/k8s-runner \
-            -n platform \
-            --set image.repository=k8s-runner \
-            --set image.tag=dev \
-            --set image.pullPolicy=Never \
-            --set fullnameOverride=k8s-runner \
-            --set rbac.clusterWide=true \
-            --set securityContext.runAsNonRoot=false
-          echo "Waiting for k8s-runner deployment to be ready..."
-          if ! kubectl rollout status deployment/k8s-runner -n platform --timeout=120s; then
-            echo "=== Pod status ==="
-            kubectl get pods -n platform -l app.kubernetes.io/name=k8s-runner -o wide
-            echo "=== Pod describe ==="
-            kubectl describe pod -n platform -l app.kubernetes.io/name=k8s-runner
-            echo "=== Pod logs ==="
-            kubectl logs -n platform -l app.kubernetes.io/name=k8s-runner --tail=100 || true
-            echo "=== Events ==="
-            kubectl get events -n platform --sort-by='.lastTimestamp' | tail -20
-            exit 1
-          fi
-
       - name: Install DevSpace
         run: |
-          curl -L -o /tmp/devspace "https://github.com/devspace-sh/devspace/releases/latest/download/devspace-linux-amd64"
-          sudo install -m 0755 /tmp/devspace /usr/local/bin/devspace
+          curl -fsSL https://github.com/devspace-sh/devspace/releases/latest/download/devspace-linux-amd64 \
+            -o /usr/local/bin/devspace
+          chmod +x /usr/local/bin/devspace
           devspace version
 
+      - name: Deploy k8s-runner from source
+        run: devspace run deploy -n platform
+
       - name: Run e2e tests
-        run: devspace run-pipeline test-e2e
+        run: devspace run test-e2e -n platform
+
+      - name: Restore ArgoCD sync
+        if: always()
+        run: devspace run restore-argocd -n platform

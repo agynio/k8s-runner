@@ -75,6 +75,29 @@ functions:
                   type: RuntimeDefault
     EOF
     )"
+  wait_for_k8s_runner: |-
+    echo "Waiting for k8s-runner deployment to roll out..."
+    kubectl rollout status deployment/k8s-runner \
+      -n ${K8S_RUNNER_NAMESPACE} --timeout=120s
+
+    echo "Waiting for k8s-runner to listen on :50051..."
+    ELAPSED=0
+    LABEL_SELECTOR="app.kubernetes.io/name=k8s-runner,app.kubernetes.io/instance=k8s-runner"
+    until exec_container --label-selector="${LABEL_SELECTOR}" -n ${K8S_RUNNER_NAMESPACE} -- bash -c \
+      'nc -z localhost 50051 >/dev/null 2>&1 || (echo > /dev/tcp/localhost/50051) >/dev/null 2>&1'; do
+      sleep 5
+      ELAPSED=$((ELAPSED + 5))
+      if [ "$ELAPSED" -ge 600 ]; then
+        echo "ERROR: k8s-runner did not become healthy within 600s" >&2
+        echo "Diagnostic pod list:" >&2
+        kubectl get pods -n ${K8S_RUNNER_NAMESPACE} -l "${LABEL_SELECTOR}" -o wide >&2 || true
+        echo "Diagnostic logs (tail 200):" >&2
+        kubectl logs -n ${K8S_RUNNER_NAMESPACE} -l "${LABEL_SELECTOR}" --tail=200 >&2 || true
+        exit 1
+      fi
+      echo "  still waiting... (${ELAPSED}s)"
+    done
+    echo "k8s-runner is running from source."
 
 deployments:
   e2e-runner:
@@ -93,7 +116,11 @@ deployments:
 
 commands:
   test-e2e: |-
-    devspace run-pipeline test-e2e $@
+    devspace run-pipeline test-e2e -n ${DEVSPACE_NAMESPACE} $@
+  deploy: |-
+    devspace run-pipeline deploy -n ${DEVSPACE_NAMESPACE} $@
+  restore-argocd: |-
+    devspace run-pipeline restore-argocd -n ${DEVSPACE_NAMESPACE} $@
 
 pipelines:
   dev:
@@ -125,6 +152,14 @@ pipelines:
         stop_dev k8s-runner
       fi
 
+  deploy:
+    run: |-
+      disable_argocd_sync
+      patch_deployment
+      start_dev --disable-pod-replace k8s-runner-deploy
+      wait_for_k8s_runner
+      echo "Deploy complete. k8s-runner is running from source."
+
   test-e2e:
     run: |-
       create_deployments e2e-runner
@@ -145,6 +180,10 @@ pipelines:
       stop_dev e2e-runner
       purge_deployments e2e-runner
       exit $EXIT_CODE
+
+  restore-argocd:
+    run: |-
+      restore_argocd_sync
 
 hooks:
   - name: restore-argocd-auto-sync
@@ -196,3 +235,31 @@ dev:
         excludePaths:
           - .git/
           - .devspace/
+
+  # One-shot variant of k8s-runner for CI deploy pipeline. Keep sync excludePaths in sync.
+  k8s-runner-deploy:
+    namespace: ${K8S_RUNNER_NAMESPACE}
+    labelSelector:
+      app.kubernetes.io/name: k8s-runner
+      app.kubernetes.io/instance: k8s-runner
+    containers:
+      k8s-runner:
+        container: k8s-runner
+        sync:
+          - path: ./:/opt/app/data
+            noWatch: true
+            excludePaths:
+              - .git/
+              - .devspace/
+              - /internal/.gen/
+              - /tmp/
+            uploadExcludePaths:
+              - .git/
+              - .devspace/
+              - /internal/.gen/
+              - /tmp/
+            downloadExcludePaths:
+              - .git/
+              - .devspace/
+              - /internal/.gen/
+              - /tmp/
