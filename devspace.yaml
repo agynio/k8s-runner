@@ -83,19 +83,21 @@ functions:
     kubectl rollout status deployment/k8s-runner \
       -n ${K8S_RUNNER_NAMESPACE} --timeout=120s
 
-    echo "Waiting for k8s-runner to listen on :50051..."
+    echo "Waiting for k8s-runner source sync and process start..."
     ELAPSED=0
     LABEL_SELECTOR="app.kubernetes.io/name=k8s-runner,app.kubernetes.io/instance=k8s-runner"
-    until exec_container --label-selector="${LABEL_SELECTOR}" -n ${K8S_RUNNER_NAMESPACE} -- bash -c \
-      'nc -z localhost 50051 >/dev/null 2>&1 || (echo > /dev/tcp/localhost/50051) >/dev/null 2>&1'; do
+    until kubectl logs -n ${K8S_RUNNER_NAMESPACE} -l "${LABEL_SELECTOR}" --tail=200 2>/dev/null | \
+      grep -q "gRPC server starting"; do
       sleep 5
       ELAPSED=$((ELAPSED + 5))
       if [ "$ELAPSED" -ge 600 ]; then
-        echo "ERROR: k8s-runner did not become healthy within 600s" >&2
+        echo "ERROR: k8s-runner ready log not found within 600s" >&2
         echo "Diagnostic pod list:" >&2
         kubectl get pods -n ${K8S_RUNNER_NAMESPACE} -l "${LABEL_SELECTOR}" -o wide >&2 || true
         echo "Diagnostic logs (tail 200):" >&2
         kubectl logs -n ${K8S_RUNNER_NAMESPACE} -l "${LABEL_SELECTOR}" --tail=200 >&2 || true
+        echo "Diagnostic previous logs:" >&2
+        kubectl logs -n ${K8S_RUNNER_NAMESPACE} -l "${LABEL_SELECTOR}" --tail=100 --previous >&2 || true
         exit 1
       fi
       echo "  still waiting... (${ELAPSED}s)"
