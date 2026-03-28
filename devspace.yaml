@@ -27,54 +27,76 @@ functions:
     fi
   patch_deployment: |-
     echo "Patching k8s-runner deployment for DevSpace..."
-    kubectl patch deployment k8s-runner -n ${K8S_RUNNER_NAMESPACE} --type strategic --patch "$(cat <<'EOF'
-    spec:
-      template:
-        spec:
-          securityContext:
-            runAsUser: 1000
-            fsGroup: 1000
-          initContainers: []
-          volumes:
-            - name: data
-              emptyDir: {}
-          containers:
-            - name: k8s-runner
-              image: ghcr.io/agynio/devcontainer-go:1 # keep in sync with E2E_IMAGE
-              workingDir: /opt/app/data
-              command:
-                - sh
-                - -c
-                - |
-                  set -eu
-                  elapsed=0
-                  while [ ! -f /opt/app/data/go.mod ]; do
-                    sleep 1; elapsed=$((elapsed + 1))
-                    [ "$elapsed" -ge 120 ] && { echo "ERROR: sync timeout" >&2; exit 1; }
-                  done
-                  exec /opt/app/data/scripts/devspace-startup.sh
-              volumeMounts:
-                - name: data
-                  mountPath: /opt/app/data
-              resources:
-                requests:
-                  cpu: 500m
-                  memory: 1Gi
-                limits:
-                  cpu: "2"
-                  memory: 4Gi
-              securityContext:
-                runAsNonRoot: true
-                runAsUser: 1000
-                runAsGroup: 1000
-                readOnlyRootFilesystem: false
-                allowPrivilegeEscalation: false
-                capabilities:
-                  drop: ["ALL"]
-                seccompProfile:
-                  type: RuntimeDefault
-    EOF
+    kubectl patch deployment k8s-runner -n ${K8S_RUNNER_NAMESPACE} --type json --patch "$(cat <<'PATCH'
+    [
+      {"op": "add", "path": "/spec/template/spec/containers/0/image",
+       "value": "ghcr.io/agynio/devcontainer-go:1"},
+
+      {"op": "add", "path": "/spec/template/spec/containers/0/workingDir",
+       "value": "/opt/app/data"},
+
+      {"op": "add", "path": "/spec/template/spec/containers/0/command",
+       "value": ["sh", "-c", "set -eu; elapsed=0; while [ ! -f /opt/app/data/go.mod ] || [ ! -f /opt/app/data/buf.gen.yaml ]; do sleep 1; elapsed=$((elapsed + 1)); [ $elapsed -ge 120 ] && exit 1; done; echo Generating protobuf types...; buf generate --include-imports buf.build/agynio/api --path agynio/api/runner/v1 --path agynio/api/ziti_management/v1 --template ./buf.gen.yaml; echo Downloading Go modules...; go mod download; echo Starting k8s-runner...; exec go run ./cmd/k8s-runner"]},
+
+      {"op": "add", "path": "/spec/template/spec/containers/0/volumeMounts",
+       "value": [{"name": "data", "mountPath": "/opt/app/data"}]},
+
+      {"op": "add", "path": "/spec/template/spec/containers/0/resources",
+       "value": {
+         "requests": {"cpu": "500m", "memory": "1Gi"},
+         "limits": {"cpu": "2", "memory": "4Gi"}
+       }},
+
+      {"op": "add", "path": "/spec/template/spec/containers/0/securityContext",
+       "value": {
+         "runAsNonRoot": true,
+         "runAsUser": 1000,
+         "runAsGroup": 1000,
+         "readOnlyRootFilesystem": false,
+         "allowPrivilegeEscalation": false,
+         "capabilities": {"drop": ["ALL"]},
+         "seccompProfile": {"type": "RuntimeDefault"}
+       }},
+
+      {"op": "remove", "path": "/spec/template/spec/containers/0/livenessProbe"},
+      {"op": "remove", "path": "/spec/template/spec/containers/0/readinessProbe"},
+
+      {"op": "add", "path": "/spec/template/spec/volumes",
+       "value": [{"name": "data", "emptyDir": {}}]},
+
+      {"op": "add", "path": "/spec/template/spec/securityContext",
+       "value": {"runAsUser": 1000, "fsGroup": 1000}},
+
+      {"op": "add", "path": "/spec/template/spec/initContainers",
+       "value": []}
+    ]
+    PATCH
     )"
+  wait_for_k8s_runner: |-
+    echo "Waiting for k8s-runner deployment to roll out..."
+    kubectl rollout status deployment/k8s-runner \
+      -n ${K8S_RUNNER_NAMESPACE} --timeout=120s
+
+    echo "Waiting for k8s-runner source sync and process start..."
+    ELAPSED=0
+    LABEL_SELECTOR="app.kubernetes.io/name=k8s-runner,app.kubernetes.io/instance=k8s-runner"
+    until kubectl logs -n ${K8S_RUNNER_NAMESPACE} -l "${LABEL_SELECTOR}" --tail=200 2>/dev/null | \
+      grep -q "gRPC server starting"; do
+      sleep 5
+      ELAPSED=$((ELAPSED + 5))
+      if [ "$ELAPSED" -ge 600 ]; then
+        echo "ERROR: k8s-runner ready log not found within 600s" >&2
+        echo "Diagnostic pod list:" >&2
+        kubectl get pods -n ${K8S_RUNNER_NAMESPACE} -l "${LABEL_SELECTOR}" -o wide >&2 || true
+        echo "Diagnostic logs (tail 200):" >&2
+        kubectl logs -n ${K8S_RUNNER_NAMESPACE} -l "${LABEL_SELECTOR}" --tail=200 >&2 || true
+        echo "Diagnostic previous logs:" >&2
+        kubectl logs -n ${K8S_RUNNER_NAMESPACE} -l "${LABEL_SELECTOR}" --tail=100 --previous >&2 || true
+        exit 1
+      fi
+      echo "  still waiting... (${ELAPSED}s)"
+    done
+    echo "k8s-runner is running from source."
 
 deployments:
   e2e-runner:
@@ -93,7 +115,11 @@ deployments:
 
 commands:
   test-e2e: |-
-    devspace run-pipeline test-e2e $@
+    devspace run-pipeline test-e2e -n ${DEVSPACE_NAMESPACE} $@
+  deploy: |-
+    devspace run-pipeline deploy -n ${DEVSPACE_NAMESPACE} $@
+  restore-argocd: |-
+    devspace run-pipeline restore-argocd -n ${DEVSPACE_NAMESPACE} $@
 
 pipelines:
   dev:
@@ -125,6 +151,14 @@ pipelines:
         stop_dev k8s-runner
       fi
 
+  deploy:
+    run: |-
+      disable_argocd_sync
+      patch_deployment
+      start_dev --disable-pod-replace k8s-runner-deploy
+      wait_for_k8s_runner
+      echo "Deploy complete. k8s-runner is running from source."
+
   test-e2e:
     run: |-
       create_deployments e2e-runner
@@ -140,11 +174,15 @@ pipelines:
             [ "$elapsed" -ge 120 ] && { echo "ERROR: sync timeout" >&2; exit 1; }
           done
           sleep 5
-          cd /opt/app/data && buf generate --include-imports buf.build/agynio/api --path agynio/api/runner/v1 --path agynio/api/ziti_management/v1 --template ./buf.gen.yaml && go test -v -count=1 -tags e2e ./test/e2e/'
+          cd /opt/app/data && buf generate --include-imports buf.build/agynio/api --path agynio/api/runner/v1 --path agynio/api/ziti_management/v1 --template ./buf.gen.yaml && go mod download && go test -v -count=1 -tags e2e ./test/e2e/'
       EXIT_CODE=$?
       stop_dev e2e-runner
       purge_deployments e2e-runner
       exit $EXIT_CODE
+
+  restore-argocd:
+    run: |-
+      restore_argocd_sync
 
 hooks:
   - name: restore-argocd-auto-sync
@@ -196,3 +234,31 @@ dev:
         excludePaths:
           - .git/
           - .devspace/
+
+  # One-shot variant of k8s-runner for CI deploy pipeline. Keep sync excludePaths in sync.
+  k8s-runner-deploy:
+    namespace: ${K8S_RUNNER_NAMESPACE}
+    labelSelector:
+      app.kubernetes.io/name: k8s-runner
+      app.kubernetes.io/instance: k8s-runner
+    containers:
+      k8s-runner:
+        container: k8s-runner
+        sync:
+          - path: ./:/opt/app/data
+            noWatch: true
+            excludePaths:
+              - .git/
+              - .devspace/
+              - /internal/.gen/
+              - /tmp/
+            uploadExcludePaths:
+              - .git/
+              - .devspace/
+              - /internal/.gen/
+              - /tmp/
+            downloadExcludePaths:
+              - .git/
+              - .devspace/
+              - /internal/.gen/
+              - /tmp/
