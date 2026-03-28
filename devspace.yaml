@@ -36,7 +36,7 @@ functions:
        "value": "/opt/app/data"},
 
       {"op": "add", "path": "/spec/template/spec/containers/0/command",
-       "value": ["sh", "-c", "set -eu; elapsed=0; while [ ! -f /opt/app/data/go.mod ]; do sleep 1; elapsed=$((elapsed + 1)); [ $elapsed -ge 120 ] && exit 1; done; exec /opt/app/data/scripts/devspace-startup.sh"]},
+       "value": ["sh", "-c", "set -eu; elapsed=0; while [ ! -f /opt/app/data/go.mod ]; do sleep 1; elapsed=$((elapsed + 1)); [ $elapsed -ge 120 ] && exit 1; done; exec sh /opt/app/data/scripts/devspace-startup.sh"]},
 
       {"op": "add", "path": "/spec/template/spec/containers/0/volumeMounts",
        "value": [{"name": "data", "mountPath": "/opt/app/data"}]},
