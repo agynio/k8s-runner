@@ -22,7 +22,9 @@ func (s *Server) PutArchive(ctx context.Context, req *runnerv1.PutArchiveRequest
 		return nil, status.Error(codes.InvalidArgument, "workload_id_and_path_required")
 	}
 
-	pod, err := s.clientset.CoreV1().Pods(s.namespace).Get(ctx, workloadID, metav1.GetOptions{})
+	podName := podNameFromID(workloadID)
+
+	pod, err := s.clientset.CoreV1().Pods(s.namespace).Get(ctx, podName, metav1.GetOptions{})
 	if err != nil {
 		return nil, grpcErrorFromKube(s.logger, err, codes.Internal)
 	}
@@ -43,7 +45,7 @@ func (s *Server) PutArchive(ctx context.Context, req *runnerv1.PutArchiveRequest
 
 	reqURL := s.clientset.CoreV1().RESTClient().Post().
 		Resource("pods").
-		Name(workloadID).
+		Name(podName).
 		Namespace(s.namespace).
 		SubResource("exec").
 		VersionedParams(options, scheme.ParameterCodec)

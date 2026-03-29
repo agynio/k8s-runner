@@ -17,7 +17,7 @@ import (
 )
 
 func TestBuildLabelsFiltersAndValidates(t *testing.T) {
-	labels, err := buildLabels("workload-1", map[string]string{
+	labels, err := buildLabels("uuid-1", map[string]string{
 		"label.team": "core",
 		"ignored":    "value",
 	})
@@ -27,7 +27,7 @@ func TestBuildLabelsFiltersAndValidates(t *testing.T) {
 
 	expected := map[string]string{
 		managedByLabelKey:  managedByLabelValue,
-		workloadIDLabelKey: "workload-1",
+		workloadIDLabelKey: "uuid-1",
 		"team":             "core",
 	}
 	if !reflect.DeepEqual(labels, expected) {
@@ -36,7 +36,7 @@ func TestBuildLabelsFiltersAndValidates(t *testing.T) {
 }
 
 func TestBuildLabelsRejectsInvalidKey(t *testing.T) {
-	_, err := buildLabels("workload-1", map[string]string{
+	_, err := buildLabels("uuid-1", map[string]string{
 		"label.bad key": "value",
 	})
 	if err == nil {
@@ -296,7 +296,8 @@ func TestStartWorkloadBuildsInitContainers(t *testing.T) {
 		t.Fatalf("expected runner id runner-123, got %q", resp.RunnerId)
 	}
 
-	pod, err := clientset.CoreV1().Pods("default").Get(ctx, resp.Id, metav1.GetOptions{})
+	podName := podNameFromID(resp.Id)
+	pod, err := clientset.CoreV1().Pods("default").Get(ctx, podName, metav1.GetOptions{})
 	if err != nil {
 		t.Fatalf("expected pod created: %v", err)
 	}
@@ -347,7 +348,8 @@ func TestStartWorkloadMapsDnsConfig(t *testing.T) {
 		t.Fatalf("expected runner id runner-456, got %q", resp.RunnerId)
 	}
 
-	pod, err := clientset.CoreV1().Pods("default").Get(ctx, resp.Id, metav1.GetOptions{})
+	podName := podNameFromID(resp.Id)
+	pod, err := clientset.CoreV1().Pods("default").Get(ctx, podName, metav1.GetOptions{})
 	if err != nil {
 		t.Fatalf("expected pod created: %v", err)
 	}

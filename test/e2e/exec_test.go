@@ -16,9 +16,9 @@ func TestExec(t *testing.T) {
 		ctx, cancel := testContext(t)
 		t.Cleanup(cancel)
 
-		workloadID := startRunningWorkload(t, ctx)
+		targetID := startRunningWorkloadTarget(t, ctx)
 		result := collectExecOutput(t, ctx, &runnerv1.ExecStartRequest{
-			TargetId:    workloadID,
+			TargetId:    targetID,
 			CommandArgv: []string{"echo", "hello-e2e"},
 		})
 
@@ -31,9 +31,9 @@ func TestExec(t *testing.T) {
 		ctx, cancel := testContext(t)
 		t.Cleanup(cancel)
 
-		workloadID := startRunningWorkload(t, ctx)
+		targetID := startRunningWorkloadTarget(t, ctx)
 		result := collectExecOutput(t, ctx, &runnerv1.ExecStartRequest{
-			TargetId:     workloadID,
+			TargetId:     targetID,
 			CommandShell: "echo out; echo err 1>&2",
 			Options:      &runnerv1.ExecOptions{SeparateStderr: true},
 			RequestId:    uniqueName("exec"),
@@ -48,9 +48,9 @@ func TestExec(t *testing.T) {
 		ctx, cancel := testContext(t)
 		t.Cleanup(cancel)
 
-		workloadID := startRunningWorkload(t, ctx)
+		targetID := startRunningWorkloadTarget(t, ctx)
 		result := collectExecOutput(t, ctx, &runnerv1.ExecStartRequest{
-			TargetId:     workloadID,
+			TargetId:     targetID,
 			CommandShell: "exit 42",
 		})
 
@@ -62,13 +62,13 @@ func TestExec(t *testing.T) {
 		ctx, cancel := testContext(t)
 		t.Cleanup(cancel)
 
-		workloadID := startRunningWorkload(t, ctx)
+		targetID := startRunningWorkloadTarget(t, ctx)
 		payload := "stdin-e2e\n"
 		result := collectExecOutput(
 			t,
 			ctx,
 			&runnerv1.ExecStartRequest{
-				TargetId:    workloadID,
+				TargetId:    targetID,
 				CommandArgv: []string{"cat"},
 			},
 			&runnerv1.ExecStdin{Data: []byte(payload)},
@@ -83,12 +83,12 @@ func TestExec(t *testing.T) {
 		ctx, cancel := testContext(t)
 		t.Cleanup(cancel)
 
-		workloadID := startRunningWorkload(t, ctx)
+		targetID := startRunningWorkloadTarget(t, ctx)
 		stream, err := runnerClient.Exec(ctx)
 		require.NoError(t, err)
 
 		err = stream.Send(&runnerv1.ExecRequest{Msg: &runnerv1.ExecRequest_Start{Start: &runnerv1.ExecStartRequest{
-			TargetId:    workloadID,
+			TargetId:    targetID,
 			CommandArgv: []string{"sleep", "300"},
 		}}})
 		require.NoError(t, err)
@@ -135,9 +135,9 @@ func TestExec(t *testing.T) {
 		ctx, cancel := testContext(t)
 		t.Cleanup(cancel)
 
-		workloadID := startRunningWorkload(t, ctx)
+		targetID := startRunningWorkloadTarget(t, ctx)
 		result := collectExecOutput(t, ctx, &runnerv1.ExecStartRequest{
-			TargetId:     workloadID,
+			TargetId:     targetID,
 			CommandShell: "pwd; echo $FOO",
 			Options: &runnerv1.ExecOptions{
 				Workdir: "/tmp",
@@ -154,9 +154,12 @@ func TestExec(t *testing.T) {
 	})
 }
 
-func startRunningWorkload(t *testing.T, ctx context.Context) string {
+func startRunningWorkloadTarget(t *testing.T, ctx context.Context) string {
 	t.Helper()
-	workloadID := startWorkload(t, ctx, sleepWorkloadRequest())
+	resp := startWorkloadWithCleanup(t, ctx, sleepWorkloadRequest())
+	workloadID := resp.GetId()
 	waitRunning(t, ctx, workloadID)
-	return workloadID
+	targetID := resp.GetContainers().GetMain()
+	require.NotEmpty(t, targetID)
+	return targetID
 }
