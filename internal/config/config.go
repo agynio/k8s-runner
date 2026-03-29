@@ -46,7 +46,7 @@ func Load() (Config, error) {
 
 	cfg.RunnerID = strings.TrimSpace(os.Getenv("RUNNER_ID"))
 	if cfg.RunnerID == "" {
-		return Config{}, fmt.Errorf("RUNNER_ID is required")
+		cfg.RunnerID = "k8s-runner"
 	}
 
 	var err error
