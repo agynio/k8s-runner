@@ -87,7 +87,8 @@ func (s *Server) StartWorkload(ctx context.Context, req *runnerv1.StartWorkloadR
 	}
 
 	return &runnerv1.StartWorkloadResponse{
-		Id: workloadID,
+		Id:       workloadID,
+		RunnerId: s.runnerID,
 		Containers: &runnerv1.WorkloadContainers{
 			Main:     workloadID,
 			Sidecars: sidecars,

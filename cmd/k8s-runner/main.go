@@ -59,6 +59,7 @@ func run() error {
 			Clientset:    kubeClient.Clientset,
 			RestConfig:   kubeClient.RestConfig,
 			Namespace:    cfg.Namespace,
+			RunnerID:     cfg.RunnerID,
 			StorageClass: cfg.StorageClass,
 			StorageSize:  cfg.StorageSize,
 			Logger:       logger,

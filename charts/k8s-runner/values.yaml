@@ -89,6 +89,8 @@ env:
     value: "0.0.0.0:50051"
   - name: KUBE_NAMESPACE
     value: "agyn-workloads"
+  - name: RUNNER_ID
+    value: "k8s-runner"
   - name: PVC_STORAGE_SIZE
     value: "10Gi"
   - name: ZITI_ENABLED

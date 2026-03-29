@@ -25,6 +25,7 @@ type Server struct {
 	clientset    kubernetes.Interface
 	restConfig   *rest.Config
 	namespace    string
+	runnerID     string
 	storageClass *string
 	storageSize  string
 	logger       *zap.Logger
@@ -38,6 +39,7 @@ type Options struct {
 	Clientset    kubernetes.Interface
 	RestConfig   *rest.Config
 	Namespace    string
+	RunnerID     string
 	StorageClass *string
 	StorageSize  string
 	Logger       *zap.Logger
@@ -49,6 +51,7 @@ func New(options Options) *Server {
 		clientset:    options.Clientset,
 		restConfig:   options.RestConfig,
 		namespace:    options.Namespace,
+		runnerID:     options.RunnerID,
 		storageClass: options.StorageClass,
 		storageSize:  options.StorageSize,
 		logger:       options.Logger,
