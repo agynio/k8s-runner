@@ -19,7 +19,9 @@ func (s *Server) GetWorkloadLabels(ctx context.Context, req *runnerv1.GetWorkloa
 		return nil, status.Error(codes.InvalidArgument, "workload_id_required")
 	}
 
-	pod, err := s.clientset.CoreV1().Pods(s.namespace).Get(ctx, workloadID, metav1.GetOptions{})
+	podName := podNameFromID(workloadID)
+
+	pod, err := s.clientset.CoreV1().Pods(s.namespace).Get(ctx, podName, metav1.GetOptions{})
 	if err != nil {
 		return nil, grpcErrorFromKube(s.logger, err, codes.Internal)
 	}
@@ -39,7 +41,7 @@ func (s *Server) FindWorkloadsByLabels(ctx context.Context, req *runnerv1.FindWo
 		if !req.GetAll() && pod.Status.Phase != corev1.PodRunning {
 			continue
 		}
-		ids = append(ids, pod.Name)
+		ids = append(ids, workloadIDFromPod(&pod))
 	}
 
 	return &runnerv1.FindWorkloadsByLabelsResponse{TargetIds: ids}, nil
@@ -60,7 +62,7 @@ func (s *Server) ListWorkloadsByVolume(ctx context.Context, req *runnerv1.ListWo
 	ids := make([]string, 0)
 	for _, pod := range list.Items {
 		if podUsesPVC(&pod, volumeName) {
-			ids = append(ids, pod.Name)
+			ids = append(ids, workloadIDFromPod(&pod))
 		}
 	}
 

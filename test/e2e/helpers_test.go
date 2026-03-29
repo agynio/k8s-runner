@@ -249,3 +249,7 @@ func uniqueName(prefix string) string {
 	}
 	return strings.ToLower(fmt.Sprintf("%s-%s", base, uuid.NewString()))
 }
+
+func podNameFromID(id string) string {
+	return fmt.Sprintf("workload-%s", id)
+}

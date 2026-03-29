@@ -24,6 +24,8 @@ func (s *Server) StreamWorkloadLogs(req *runnerv1.StreamWorkloadLogsRequest, str
 		return status.Error(codes.InvalidArgument, "workload_id_required")
 	}
 
+	podName := podNameFromID(workloadID)
+
 	options := &corev1.PodLogOptions{
 		Follow:     req.GetFollow(),
 		Timestamps: req.GetTimestamps(),
@@ -37,7 +39,7 @@ func (s *Server) StreamWorkloadLogs(req *runnerv1.StreamWorkloadLogsRequest, str
 		options.SinceTime = &sinceTime
 	}
 
-	logStream, err := s.clientset.CoreV1().Pods(s.namespace).GetLogs(workloadID, options).Stream(stream.Context())
+	logStream, err := s.clientset.CoreV1().Pods(s.namespace).GetLogs(podName, options).Stream(stream.Context())
 	if err != nil {
 		return grpcErrorFromKube(s.logger, err, codes.Internal)
 	}

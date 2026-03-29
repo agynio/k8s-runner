@@ -14,13 +14,16 @@ func TestPutArchive(t *testing.T) {
 	ctx, cancel := testContext(t)
 	t.Cleanup(cancel)
 
-	workloadID := startWorkload(t, ctx, &runnerv1.StartWorkloadRequest{
+	resp := startWorkloadWithCleanup(t, ctx, &runnerv1.StartWorkloadRequest{
 		Main: &runnerv1.ContainerSpec{
 			Image:      defaultWorkloadImage,
 			Entrypoint: "/bin/sh",
 			Cmd:        []string{"-c", "mkdir -p /tmp/e2e && sleep 300"},
 		},
 	})
+	workloadID := resp.GetId()
+	targetID := resp.GetContainers().GetMain()
+	require.NotEmpty(t, targetID)
 	waitRunning(t, ctx, workloadID)
 
 	tarPayload := buildTarWithFile("hello.txt", "hello-storage")
@@ -32,7 +35,7 @@ func TestPutArchive(t *testing.T) {
 	require.NoError(t, err)
 
 	result := collectExecOutput(t, ctx, &runnerv1.ExecStartRequest{
-		TargetId:    workloadID,
+		TargetId:    targetID,
 		CommandArgv: []string{"cat", "/tmp/e2e/hello.txt"},
 	})
 	require.NotNil(t, result.exit)

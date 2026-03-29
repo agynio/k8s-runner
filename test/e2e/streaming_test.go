@@ -65,12 +65,13 @@ func TestStreamEvents(t *testing.T) {
 
 	workloadID := startWorkload(t, ctx, sleepWorkloadRequest())
 	waitRunning(t, ctx, workloadID)
+	podName := podNameFromID(workloadID)
 
 	for {
 		resp, err := stream.Recv()
 		require.NoError(t, err)
 		if data := resp.GetData(); data != nil {
-			if strings.Contains(data.GetJson(), workloadID) {
+			if strings.Contains(data.GetJson(), podName) {
 				return
 			}
 			continue

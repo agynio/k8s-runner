@@ -28,9 +28,10 @@ func (s *Server) StartWorkload(ctx context.Context, req *runnerv1.StartWorkloadR
 		return nil, status.Error(codes.InvalidArgument, "main_container_image_required")
 	}
 
-	workloadID := fmt.Sprintf("workload-%s", uuid.NewString())
+	id := uuid.NewString()
+	podName := podNameFromID(id)
 
-	labels, err := buildLabels(workloadID, req.AdditionalProperties)
+	labels, err := buildLabels(id, req.AdditionalProperties)
 	if err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "invalid_label: %v", err)
 	}
@@ -52,7 +53,7 @@ func (s *Server) StartWorkload(ctx context.Context, req *runnerv1.StartWorkloadR
 
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:        workloadID,
+			Name:        podName,
 			Namespace:   s.namespace,
 			Labels:      labels,
 			Annotations: annotations,
@@ -81,16 +82,16 @@ func (s *Server) StartWorkload(ctx context.Context, req *runnerv1.StartWorkloadR
 	for _, name := range sidecarNames {
 		sidecars = append(sidecars, &runnerv1.SidecarInstance{
 			Name:   name,
-			Id:     fmt.Sprintf("%s:%s", workloadID, name),
+			Id:     fmt.Sprintf("%s:%s", podName, name),
 			Status: "starting",
 		})
 	}
 
 	return &runnerv1.StartWorkloadResponse{
-		Id:       workloadID,
+		Id:       id,
 		RunnerId: s.runnerID,
 		Containers: &runnerv1.WorkloadContainers{
-			Main:     workloadID,
+			Main:     podName,
 			Sidecars: sidecars,
 		},
 		Status: runnerv1.WorkloadStatus_WORKLOAD_STATUS_STARTING,
@@ -103,11 +104,13 @@ func (s *Server) StopWorkload(ctx context.Context, req *runnerv1.StopWorkloadReq
 		return nil, status.Error(codes.InvalidArgument, "workload_id_required")
 	}
 
+	podName := podNameFromID(workloadID)
+
 	deleteOptions := metav1.DeleteOptions{}
 	if grace := int64(req.GetTimeoutSec()); grace > 0 {
 		deleteOptions.GracePeriodSeconds = &grace
 	}
-	if err := s.clientset.CoreV1().Pods(s.namespace).Delete(ctx, workloadID, deleteOptions); err != nil {
+	if err := s.clientset.CoreV1().Pods(s.namespace).Delete(ctx, podName, deleteOptions); err != nil {
 		return nil, grpcErrorFromKube(s.logger, err, codes.Internal)
 	}
 
@@ -120,7 +123,9 @@ func (s *Server) RemoveWorkload(ctx context.Context, req *runnerv1.RemoveWorkloa
 		return nil, status.Error(codes.InvalidArgument, "workload_id_required")
 	}
 
-	pod, err := s.clientset.CoreV1().Pods(s.namespace).Get(ctx, workloadID, metav1.GetOptions{})
+	podName := podNameFromID(workloadID)
+
+	pod, err := s.clientset.CoreV1().Pods(s.namespace).Get(ctx, podName, metav1.GetOptions{})
 	if err != nil {
 		return nil, grpcErrorFromKube(s.logger, err, codes.Internal)
 	}
@@ -131,7 +136,7 @@ func (s *Server) RemoveWorkload(ctx context.Context, req *runnerv1.RemoveWorkloa
 		grace = &zero
 	}
 	deleteOptions := metav1.DeleteOptions{GracePeriodSeconds: grace}
-	if err := s.clientset.CoreV1().Pods(s.namespace).Delete(ctx, workloadID, deleteOptions); err != nil {
+	if err := s.clientset.CoreV1().Pods(s.namespace).Delete(ctx, podName, deleteOptions); err != nil {
 		return nil, grpcErrorFromKube(s.logger, err, codes.Internal)
 	}
 
@@ -161,7 +166,9 @@ func (s *Server) InspectWorkload(ctx context.Context, req *runnerv1.InspectWorkl
 		return nil, status.Error(codes.InvalidArgument, "workload_id_required")
 	}
 
-	pod, err := s.clientset.CoreV1().Pods(s.namespace).Get(ctx, workloadID, metav1.GetOptions{})
+	podName := podNameFromID(workloadID)
+
+	pod, err := s.clientset.CoreV1().Pods(s.namespace).Get(ctx, podName, metav1.GetOptions{})
 	if err != nil {
 		return nil, grpcErrorFromKube(s.logger, err, codes.Internal)
 	}
@@ -182,8 +189,8 @@ func (s *Server) InspectWorkload(ctx context.Context, req *runnerv1.InspectWorkl
 	stateRunning := pod.Status.Phase == corev1.PodRunning
 
 	return &runnerv1.InspectWorkloadResponse{
-		Id:           pod.Name,
-		Name:         pod.Name,
+		Id:           workloadID,
+		Name:         workloadID,
 		Image:        image,
 		ConfigImage:  mainContainer.Image,
 		ConfigLabels: pod.Labels,
@@ -199,9 +206,11 @@ func (s *Server) TouchWorkload(ctx context.Context, req *runnerv1.TouchWorkloadR
 		return nil, status.Error(codes.InvalidArgument, "workload_id_required")
 	}
 
+	podName := podNameFromID(workloadID)
+
 	timestamp := time.Now().UTC().Format(time.RFC3339Nano)
 	patch := fmt.Sprintf(`{"metadata":{"annotations":{"%s":"%s"}}}`, touchedAtAnnotationKey, timestamp)
-	if _, err := s.clientset.CoreV1().Pods(s.namespace).Patch(ctx, workloadID, types.MergePatchType, []byte(patch), metav1.PatchOptions{}); err != nil {
+	if _, err := s.clientset.CoreV1().Pods(s.namespace).Patch(ctx, podName, types.MergePatchType, []byte(patch), metav1.PatchOptions{}); err != nil {
 		return nil, grpcErrorFromKube(s.logger, err, codes.Internal)
 	}
 
