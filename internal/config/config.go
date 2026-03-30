@@ -17,7 +17,6 @@ const (
 	defaultZitiServiceName          = "runner"
 	defaultStorageSize              = "10Gi"
 	defaultLogLevel                 = "info"
-	defaultRunnerID                 = "00000000-0000-0000-0000-6b38732d7275"
 )
 
 // Config captures runtime configuration derived from the environment.
@@ -47,7 +46,7 @@ func Load() (Config, error) {
 
 	cfg.RunnerID = strings.TrimSpace(os.Getenv("RUNNER_ID"))
 	if cfg.RunnerID == "" {
-		cfg.RunnerID = defaultRunnerID
+		return Config{}, fmt.Errorf("RUNNER_ID is required")
 	}
 
 	var err error
