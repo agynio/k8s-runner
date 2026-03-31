@@ -60,17 +60,16 @@ func run() error {
 	}
 
 	grpcServer := grpc.NewServer()
-	runnerv1.RegisterRunnerServiceServer(
-		grpcServer,
-		server.New(server.Options{
-			Clientset:    kubeClient.Clientset,
-			RestConfig:   kubeClient.RestConfig,
-			Namespace:    cfg.Namespace,
-			RunnerID:     cfg.RunnerID,
-			StorageClass: cfg.StorageClass,
-			StorageSize:  cfg.StorageSize,
-			Logger:       logger,
-		}),
+		runnerv1.RegisterRunnerServiceServer(
+			grpcServer,
+			server.New(server.Options{
+				Clientset:    kubeClient.Clientset,
+				RestConfig:   kubeClient.RestConfig,
+				Namespace:    cfg.Namespace,
+				StorageClass: cfg.StorageClass,
+				StorageSize:  cfg.StorageSize,
+				Logger:       logger,
+			}),
 	)
 
 	var wg sync.WaitGroup

@@ -33,7 +33,6 @@ func TestLoadZitiEnrollmentTimeoutInvalid(t *testing.T) {
 func setBaseEnv(t *testing.T) {
 	t.Helper()
 	t.Setenv("KUBE_NAMESPACE", "test-namespace")
-	t.Setenv("RUNNER_ID", "runner-1")
 	t.Setenv("GRPC_ADDR", defaultGRPCAddr)
 	t.Setenv("PVC_STORAGE_SIZE", defaultStorageSize)
 	t.Setenv("PVC_STORAGE_CLASS", "")

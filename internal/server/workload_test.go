@@ -271,7 +271,6 @@ func TestStartWorkloadBuildsInitContainers(t *testing.T) {
 	server := New(Options{
 		Clientset:   clientset,
 		Namespace:   "default",
-		RunnerID:    "runner-123",
 		StorageSize: "1Gi",
 		Logger:      zap.NewNop(),
 	})
@@ -291,9 +290,6 @@ func TestStartWorkloadBuildsInitContainers(t *testing.T) {
 	}
 	if resp == nil || resp.Id == "" {
 		t.Fatalf("expected response with id")
-	}
-	if resp.RunnerId != "runner-123" {
-		t.Fatalf("expected runner id runner-123, got %q", resp.RunnerId)
 	}
 
 	podName := podNameFromID(resp.Id)
@@ -323,7 +319,6 @@ func TestStartWorkloadMapsDnsConfig(t *testing.T) {
 	server := New(Options{
 		Clientset:   clientset,
 		Namespace:   "default",
-		RunnerID:    "runner-456",
 		StorageSize: "1Gi",
 		Logger:      zap.NewNop(),
 	})
@@ -343,9 +338,6 @@ func TestStartWorkloadMapsDnsConfig(t *testing.T) {
 	}
 	if resp == nil || resp.Id == "" {
 		t.Fatalf("expected response with id")
-	}
-	if resp.RunnerId != "runner-456" {
-		t.Fatalf("expected runner id runner-456, got %q", resp.RunnerId)
 	}
 
 	podName := podNameFromID(resp.Id)
