@@ -100,6 +100,8 @@ env:
     value: "ziti-management:50051"
   - name: ZITI_LEASE_RENEWAL_INTERVAL
     value: "2m"
+  - name: ZITI_ENROLLMENT_TIMEOUT
+    value: "2m"
   - name: ZITI_SERVICE_NAME
     value: "runner"
   - name: LOG_LEVEL
