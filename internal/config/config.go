@@ -14,6 +14,7 @@ const (
 	defaultGRPCAddr                 = ":50051"
 	defaultZitiManagementAddress    = "ziti-management:50051"
 	defaultZitiLeaseRenewalInterval = 2 * time.Minute
+	defaultZitiEnrollmentTimeout    = 2 * time.Minute
 	defaultZitiServiceName          = "runner"
 	defaultStorageSize              = "10Gi"
 	defaultLogLevel                 = "info"
@@ -27,6 +28,7 @@ type Config struct {
 	ZitiEnabled              bool
 	ZitiManagementAddress    string
 	ZitiLeaseRenewalInterval time.Duration
+	ZitiEnrollmentTimeout    time.Duration
 	ZitiServiceName          string
 	StorageClass             *string
 	StorageSize              string
@@ -67,8 +69,18 @@ func Load() (Config, error) {
 			return Config{}, fmt.Errorf("ZITI_LEASE_RENEWAL_INTERVAL must be greater than 0")
 		}
 		cfg.ZitiLeaseRenewalInterval = leaseInterval
+
+		enrollmentTimeout, err := readDuration("ZITI_ENROLLMENT_TIMEOUT", defaultZitiEnrollmentTimeout)
+		if err != nil {
+			return Config{}, err
+		}
+		if enrollmentTimeout <= 0 {
+			return Config{}, fmt.Errorf("ZITI_ENROLLMENT_TIMEOUT must be greater than 0")
+		}
+		cfg.ZitiEnrollmentTimeout = enrollmentTimeout
 	} else {
 		cfg.ZitiServiceName = readEnv("ZITI_SERVICE_NAME", defaultZitiServiceName)
+		cfg.ZitiEnrollmentTimeout = defaultZitiEnrollmentTimeout
 	}
 
 	storageClass := strings.TrimSpace(os.Getenv("PVC_STORAGE_CLASS"))

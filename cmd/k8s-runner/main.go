@@ -15,7 +15,9 @@ import (
 	"github.com/openziti/sdk-golang/ziti"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/status"
 
 	runnerv1 "github.com/agynio/k8s-runner/internal/.gen/agynio/api/runner/v1"
 	zitimgmtv1 "github.com/agynio/k8s-runner/internal/.gen/agynio/api/ziti_management/v1"
@@ -23,6 +25,11 @@ import (
 	"github.com/agynio/k8s-runner/internal/kube"
 	"github.com/agynio/k8s-runner/internal/logging"
 	"github.com/agynio/k8s-runner/internal/server"
+)
+
+const (
+	retryInitialBackoff = 1 * time.Second
+	retryMaxBackoff     = 15 * time.Second
 )
 
 func main() {
@@ -99,10 +106,18 @@ func run() error {
 		defer zitiConn.Close()
 
 		zitiMgmtClient := zitimgmtv1.NewZitiManagementServiceClient(zitiConn)
-		identityResponse, err := zitiMgmtClient.RequestServiceIdentity(ctx, &zitimgmtv1.RequestServiceIdentityRequest{
-			ServiceType: zitimgmtv1.ServiceType_SERVICE_TYPE_RUNNER,
-		})
-		if err != nil {
+
+		enrollmentCtx, cancel := context.WithTimeout(ctx, cfg.ZitiEnrollmentTimeout)
+		defer cancel()
+
+		var identityResponse *zitimgmtv1.RequestServiceIdentityResponse
+		if err := retryWithBackoff(enrollmentCtx, logger, "ziti enrollment", func(attemptCtx context.Context) error {
+			var requestErr error
+			identityResponse, requestErr = zitiMgmtClient.RequestServiceIdentity(attemptCtx, &zitimgmtv1.RequestServiceIdentityRequest{
+				ServiceType: zitimgmtv1.ServiceType_SERVICE_TYPE_RUNNER,
+			})
+			return requestErr
+		}); err != nil {
 			return fmt.Errorf("request ziti service identity: %w", err)
 		}
 
@@ -139,6 +154,60 @@ func run() error {
 
 	wg.Wait()
 	return nil
+}
+
+func retryWithBackoff(ctx context.Context, logger *zap.Logger, operationName string, fn func(context.Context) error) error {
+	backoff := retryInitialBackoff
+	attempt := 1
+	for {
+		err := fn(ctx)
+		if err == nil {
+			return nil
+		}
+
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+
+		if !isRetryableGrpcError(err) {
+			return err
+		}
+
+		delay := backoff
+		if delay > retryMaxBackoff {
+			delay = retryMaxBackoff
+		}
+
+		logger.Warn(
+			"operation failed, retrying",
+			zap.String("operation", operationName),
+			zap.Int("attempt", attempt),
+			zap.Duration("backoff", delay),
+			zap.Error(err),
+		)
+
+		timer := time.NewTimer(delay)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return ctx.Err()
+		case <-timer.C:
+		}
+
+		backoff *= 2
+		if backoff > retryMaxBackoff {
+			backoff = retryMaxBackoff
+		}
+		attempt++
+	}
+}
+
+func isRetryableGrpcError(err error) bool {
+	statusErr, ok := status.FromError(err)
+	if !ok {
+		return false
+	}
+	return statusErr.Code() == codes.Unavailable || statusErr.Code() == codes.Unknown
 }
 
 func renewLease(ctx context.Context, logger *zap.Logger, client zitimgmtv1.ZitiManagementServiceClient, identityID string, interval time.Duration) {
