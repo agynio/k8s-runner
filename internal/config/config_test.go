@@ -64,8 +64,9 @@ func TestLoadZitiRoleAttributesDefault(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if !reflect.DeepEqual(cfg.ZitiRoleAttributes, splitRoleAttributes(defaultZitiRoleAttributes)) {
-		t.Fatalf("expected ziti role attributes %v, got %v", splitRoleAttributes(defaultZitiRoleAttributes), cfg.ZitiRoleAttributes)
+	expected := []string{"runners"}
+	if !reflect.DeepEqual(cfg.ZitiRoleAttributes, expected) {
+		t.Fatalf("expected ziti role attributes %v, got %v", expected, cfg.ZitiRoleAttributes)
 	}
 }
 

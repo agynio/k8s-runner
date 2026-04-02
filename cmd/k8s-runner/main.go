@@ -30,6 +30,7 @@ import (
 const (
 	retryInitialBackoff = 1 * time.Second
 	retryMaxBackoff     = 15 * time.Second
+	cleanupTimeout      = 10 * time.Second
 )
 
 func main() {
@@ -150,7 +151,7 @@ func run() error {
 		logger.Info("shutting down")
 		grpcServer.GracefulStop()
 		if identityResponse != nil && zitiMgmtClient != nil {
-			cleanupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			cleanupCtx, cancel := context.WithTimeout(context.Background(), cleanupTimeout)
 			defer cancel()
 			if _, err := zitiMgmtClient.DeleteRunnerIdentity(cleanupCtx, &zitimgmtv1.DeleteRunnerIdentityRequest{
 				ZitiIdentityId: identityResponse.ZitiIdentityId,
