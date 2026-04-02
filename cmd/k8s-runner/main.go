@@ -74,6 +74,8 @@ func run() error {
 
 	var wg sync.WaitGroup
 	errCh := make(chan error, 2)
+	var zitiMgmtClient zitimgmtv1.ZitiManagementServiceClient
+	var identityResponse *zitimgmtv1.CreateRunnerIdentityResponse
 
 	startServe := func(listener net.Listener, label string) {
 		wg.Add(1)
@@ -104,20 +106,20 @@ func run() error {
 		}
 		defer zitiConn.Close()
 
-		zitiMgmtClient := zitimgmtv1.NewZitiManagementServiceClient(zitiConn)
+		zitiMgmtClient = zitimgmtv1.NewZitiManagementServiceClient(zitiConn)
 
 		enrollmentCtx, cancel := context.WithTimeout(ctx, cfg.ZitiEnrollmentTimeout)
 		defer cancel()
 
-		var identityResponse *zitimgmtv1.RequestServiceIdentityResponse
 		if err := retryWithBackoff(enrollmentCtx, logger, "ziti enrollment", func(attemptCtx context.Context) error {
 			var requestErr error
-			identityResponse, requestErr = zitiMgmtClient.RequestServiceIdentity(attemptCtx, &zitimgmtv1.RequestServiceIdentityRequest{
-				ServiceType: zitimgmtv1.ServiceType_SERVICE_TYPE_RUNNER,
+			identityResponse, requestErr = zitiMgmtClient.CreateRunnerIdentity(attemptCtx, &zitimgmtv1.CreateRunnerIdentityRequest{
+				RunnerId:       cfg.RunnerID,
+				RoleAttributes: cfg.ZitiRoleAttributes,
 			})
 			return requestErr
 		}); err != nil {
-			return fmt.Errorf("request ziti service identity: %w", err)
+			return fmt.Errorf("create ziti runner identity: %w", err)
 		}
 
 		zitiConfig := &ziti.Config{}
@@ -131,14 +133,12 @@ func run() error {
 		}
 		defer zitiContext.Close()
 
-		zitiListener, err := zitiContext.ListenWithOptions(cfg.ZitiServiceName, ziti.DefaultListenOptions())
+		zitiListener, err := zitiContext.ListenWithOptions(identityResponse.ZitiServiceName, ziti.DefaultListenOptions())
 		if err != nil {
-			return fmt.Errorf("listen on ziti service %s: %w", cfg.ZitiServiceName, err)
+			return fmt.Errorf("listen on ziti service %s: %w", identityResponse.ZitiServiceName, err)
 		}
 		defer zitiListener.Close()
 		startServe(zitiListener, "ziti")
-
-		go renewLease(ctx, logger, zitiMgmtClient, identityResponse.ZitiIdentityId, cfg.ZitiLeaseRenewalInterval)
 	}
 
 	select {
@@ -149,6 +149,16 @@ func run() error {
 	case <-ctx.Done():
 		logger.Info("shutting down")
 		grpcServer.GracefulStop()
+		if identityResponse != nil && zitiMgmtClient != nil {
+			cleanupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			if _, err := zitiMgmtClient.DeleteRunnerIdentity(cleanupCtx, &zitimgmtv1.DeleteRunnerIdentityRequest{
+				ZitiIdentityId: identityResponse.ZitiIdentityId,
+				ZitiServiceId:  identityResponse.ZitiServiceId,
+			}); err != nil {
+				logger.Warn("failed to delete ziti runner identity", zap.Error(err))
+			}
+		}
 	}
 
 	wg.Wait()
@@ -207,22 +217,4 @@ func isRetryableGrpcError(err error) bool {
 		return false
 	}
 	return statusErr.Code() == codes.Unavailable || statusErr.Code() == codes.Unknown
-}
-
-func renewLease(ctx context.Context, logger *zap.Logger, client zitimgmtv1.ZitiManagementServiceClient, identityID string, interval time.Duration) {
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			if ctx.Err() != nil {
-				return
-			}
-			if _, err := client.ExtendIdentityLease(ctx, &zitimgmtv1.ExtendIdentityLeaseRequest{ZitiIdentityId: identityID}); err != nil {
-				logger.Warn("failed to extend ziti lease", zap.Error(err))
-			}
-		}
-	}
 }
