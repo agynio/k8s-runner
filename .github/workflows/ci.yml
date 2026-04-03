@@ -61,6 +61,7 @@ jobs:
 
       - name: Bootstrap cluster
         env:
+          # Temporary: pre-provisioned runner identity ID from bootstrap; remove after enrollment migration.
           TF_VAR_k8s_runner_identity_id: 439e0da2-88cd-46d7-bb9c-56c723c15606
         run: cd bootstrap && ./apply.sh -y
 

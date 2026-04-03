@@ -48,9 +48,9 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 
-	cfg.GatewayAddress = readEnv("GATEWAY_ADDRESS", defaultGatewayAddress)
-
 	if cfg.ZitiEnabled {
+		cfg.GatewayAddress = readEnv("GATEWAY_ADDRESS", defaultGatewayAddress)
+
 		serviceToken := strings.TrimSpace(os.Getenv("SERVICE_TOKEN"))
 		if serviceToken == "" {
 			return Config{}, fmt.Errorf("SERVICE_TOKEN is required when ZITI_ENABLED is true")
