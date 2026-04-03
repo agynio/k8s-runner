@@ -183,7 +183,7 @@ pipelines:
             [ "$elapsed" -ge 120 ] && { echo "ERROR: sync timeout" >&2; exit 1; }
           done
           sleep 5
-          cd /opt/app/data && buf generate --include-imports buf.build/agynio/api --path agynio/api/runner/v1 --path agynio/api/runners/v1 --path agynio/api/gateway/v1 --template ./buf.gen.yaml && go mod download && go test -v -count=1 -tags e2e ./test/e2e/'
+          cd /opt/app/data && buf generate --include-imports buf.build/agynio/api --path agynio/api/runner/v1 --path agynio/api/runners/v1 --path agynio/api/gateway/v1 --template ./buf.gen.yaml && go mod tidy && go test -v -count=1 -tags e2e ./test/e2e/'
       EXIT_CODE=$?
       stop_dev e2e-runner
       purge_deployments e2e-runner
