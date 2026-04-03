@@ -249,6 +249,9 @@ dev:
         excludePaths:
           - .git/
           - .devspace/
+          - /bootstrap/
+          - /internal/.gen/
+          - /tmp/
 
   # One-shot variant of k8s-runner for CI deploy pipeline. Keep sync excludePaths in sync.
   k8s-runner-deploy:
@@ -267,11 +270,13 @@ dev:
               - .devspace/
               - /internal/.gen/
               - /tmp/
+              - /bootstrap/
             uploadExcludePaths:
               - .git/
               - .devspace/
               - /internal/.gen/
               - /tmp/
+              - /bootstrap/
             downloadExcludePaths:
               - .git/
               - .devspace/
