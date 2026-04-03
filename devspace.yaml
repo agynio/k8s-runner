@@ -36,7 +36,16 @@ functions:
        "value": "/opt/app/data"},
 
       {"op": "add", "path": "/spec/template/spec/containers/0/command",
-       "value": ["sh", "-c", "set -eu; elapsed=0; while [ ! -f /opt/app/data/go.mod ] || [ ! -f /opt/app/data/buf.gen.yaml ]; do sleep 1; elapsed=$((elapsed + 1)); [ $elapsed -ge 120 ] && exit 1; done; echo Generating protobuf types...; buf generate --include-imports buf.build/agynio/api --path agynio/api/runner/v1 --path agynio/api/ziti_management/v1 --template ./buf.gen.yaml; echo Downloading Go modules...; go mod download; echo Starting k8s-runner...; exec go run ./cmd/k8s-runner"]},
+       "value": ["sh", "-c", "set -eu; elapsed=0; while [ ! -f /opt/app/data/go.mod ] || [ ! -f /opt/app/data/buf.gen.yaml ] || [ ! -f /opt/app/data/cmd/k8s-runner/main.go ]; do sleep 1; elapsed=$((elapsed + 1)); [ $elapsed -ge 120 ] && exit 1; done; echo Generating protobuf types...; buf generate --include-imports buf.build/agynio/api --path agynio/api/runner/v1 --path agynio/api/runners/v1 --path agynio/api/gateway/v1 --template ./buf.gen.yaml; echo Tidying Go modules...; go mod tidy; echo Starting k8s-runner...; go build -o /tmp/k8s-runner ./cmd/k8s-runner && exec /tmp/k8s-runner"]},
+
+      {"op": "replace", "path": "/spec/template/spec/containers/0/env",
+       "value": [
+         {"name": "GRPC_ADDR", "value": "0.0.0.0:50051"},
+         {"name": "KUBE_NAMESPACE", "value": "agyn-workloads"},
+         {"name": "PVC_STORAGE_SIZE", "value": "10Gi"},
+         {"name": "ZITI_ENABLED", "value": "false"},
+         {"name": "LOG_LEVEL", "value": "info"}
+       ]},
 
       {"op": "add", "path": "/spec/template/spec/containers/0/volumeMounts",
        "value": [{"name": "data", "mountPath": "/opt/app/data"}]},
@@ -106,10 +115,20 @@ deployments:
         name: component-chart
         repo: https://charts.devspace.sh
       values:
+        securityContext:
+          runAsUser: 1000
+          fsGroup: 1000
         containers:
           - image: ${E2E_IMAGE}
             command: ["sleep"]
             args: ["infinity"]
+            volumeMounts:
+              - containerPath: /opt/app/data
+                volume:
+                  name: data
+        volumes:
+          - name: data
+            emptyDir: {}
         labels:
           app.kubernetes.io/name: k8s-runner-e2e
 
@@ -155,6 +174,7 @@ pipelines:
     run: |-
       disable_argocd_sync
       patch_deployment
+      kubectl rollout status deployment/k8s-runner -n ${K8S_RUNNER_NAMESPACE} --timeout=120s
       start_dev --disable-pod-replace k8s-runner-deploy
       wait_for_k8s_runner
       echo "Deploy complete. k8s-runner is running from source."
@@ -162,21 +182,13 @@ pipelines:
   test-e2e:
     run: |-
       create_deployments e2e-runner
-      start_dev e2e-runner &
-      wait_pod --label-selector "app.kubernetes.io/name=k8s-runner-e2e" -n ${K8S_RUNNER_NAMESPACE}
+      start_dev e2e-runner-test
+      echo "Sync complete. Running e2e tests..."
       exec_container \
         --label-selector "app.kubernetes.io/name=k8s-runner-e2e" \
         -n ${K8S_RUNNER_NAMESPACE} \
-        -- bash -c '
-          elapsed=0
-          while [ ! -f /opt/app/data/go.mod ] || [ ! -f /opt/app/data/buf.gen.yaml ] || [ ! -f /opt/app/data/test/e2e/helpers_test.go ]; do
-            sleep 1; elapsed=$((elapsed + 1))
-            [ "$elapsed" -ge 120 ] && { echo "ERROR: sync timeout" >&2; exit 1; }
-          done
-          sleep 5
-          cd /opt/app/data && buf generate --include-imports buf.build/agynio/api --path agynio/api/runner/v1 --path agynio/api/ziti_management/v1 --template ./buf.gen.yaml && go mod download && go test -v -count=1 -tags e2e ./test/e2e/'
+        -- bash -c 'cd /opt/app/data && buf generate --include-imports buf.build/agynio/api --path agynio/api/runner/v1 --path agynio/api/runners/v1 --path agynio/api/gateway/v1 --template ./buf.gen.yaml && go mod tidy && go test -v -count=1 -tags e2e ./test/e2e/'
       EXIT_CODE=$?
-      stop_dev e2e-runner
       purge_deployments e2e-runner
       exit $EXIT_CODE
 
@@ -235,6 +247,22 @@ dev:
           - .git/
           - .devspace/
 
+  e2e-runner-test:
+    namespace: ${K8S_RUNNER_NAMESPACE}
+    labelSelector:
+      app.kubernetes.io/name: k8s-runner-e2e
+    command: ["sleep", "infinity"]
+    workingDir: /opt/app/data
+    sync:
+      - path: ./:/opt/app/data
+        noWatch: true
+        excludePaths:
+          - .git/
+          - .devspace/
+          - /bootstrap/
+          - /internal/.gen/
+          - /tmp/
+
   # One-shot variant of k8s-runner for CI deploy pipeline. Keep sync excludePaths in sync.
   k8s-runner-deploy:
     namespace: ${K8S_RUNNER_NAMESPACE}
@@ -252,11 +280,13 @@ dev:
               - .devspace/
               - /internal/.gen/
               - /tmp/
+              - /bootstrap/
             uploadExcludePaths:
               - .git/
               - .devspace/
               - /internal/.gen/
               - /tmp/
+              - /bootstrap/
             downloadExcludePaths:
               - .git/
               - .devspace/

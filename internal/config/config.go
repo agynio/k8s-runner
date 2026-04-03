@@ -7,17 +7,15 @@ import (
 	"strings"
 	"time"
 
-	"github.com/google/uuid"
 	"k8s.io/apimachinery/pkg/api/resource"
 )
 
 const (
 	defaultGRPCAddr              = ":50051"
-	defaultZitiManagementAddress = "ziti-management:50051"
+	defaultGatewayAddress        = "gateway:8080"
 	defaultZitiEnrollmentTimeout = 2 * time.Minute
 	defaultStorageSize           = "10Gi"
 	defaultLogLevel              = "info"
-	defaultZitiRoleAttributes    = "runners"
 )
 
 // Config captures runtime configuration derived from the environment.
@@ -25,10 +23,9 @@ type Config struct {
 	GRPCAddr              string
 	Namespace             string
 	ZitiEnabled           bool
-	ZitiManagementAddress string
+	ServiceToken          string
+	GatewayAddress        string
 	ZitiEnrollmentTimeout time.Duration
-	RunnerID              string
-	ZitiRoleAttributes    []string
 	StorageClass          *string
 	StorageSize           string
 	LogLevel              string
@@ -52,22 +49,13 @@ func Load() (Config, error) {
 	}
 
 	if cfg.ZitiEnabled {
-		cfg.ZitiManagementAddress = readEnv("ZITI_MANAGEMENT_ADDRESS", defaultZitiManagementAddress)
+		cfg.GatewayAddress = readEnv("GATEWAY_ADDRESS", defaultGatewayAddress)
 
-		runnerID := strings.TrimSpace(os.Getenv("RUNNER_ID"))
-		if runnerID == "" {
-			return Config{}, fmt.Errorf("RUNNER_ID is required when ZITI_ENABLED is true")
+		serviceToken := strings.TrimSpace(os.Getenv("SERVICE_TOKEN"))
+		if serviceToken == "" {
+			return Config{}, fmt.Errorf("SERVICE_TOKEN is required when ZITI_ENABLED is true")
 		}
-		if _, err := uuid.Parse(runnerID); err != nil {
-			return Config{}, fmt.Errorf("invalid RUNNER_ID: %w", err)
-		}
-		cfg.RunnerID = runnerID
-
-		roleAttributes, err := readRoleAttributes("ZITI_ROLE_ATTRIBUTES", defaultZitiRoleAttributes)
-		if err != nil {
-			return Config{}, err
-		}
-		cfg.ZitiRoleAttributes = roleAttributes
+		cfg.ServiceToken = serviceToken
 
 		enrollmentTimeout, err := readDuration("ZITI_ENROLLMENT_TIMEOUT", defaultZitiEnrollmentTimeout)
 		if err != nil {
@@ -133,31 +121,6 @@ func readDuration(key string, def time.Duration) (time.Duration, error) {
 		return 0, fmt.Errorf("invalid %s: %w", key, err)
 	}
 	return parsed, nil
-}
-
-func readRoleAttributes(key string, def string) ([]string, error) {
-	value, ok := os.LookupEnv(key)
-	if !ok || strings.TrimSpace(value) == "" {
-		value = def
-	}
-	roleAttributes := splitRoleAttributes(value)
-	if len(roleAttributes) == 0 {
-		return nil, fmt.Errorf("%s must contain at least one value", key)
-	}
-	return roleAttributes, nil
-}
-
-func splitRoleAttributes(value string) []string {
-	parts := strings.Split(value, ",")
-	roleAttributes := make([]string, 0, len(parts))
-	for _, part := range parts {
-		trimmed := strings.TrimSpace(part)
-		if trimmed == "" {
-			continue
-		}
-		roleAttributes = append(roleAttributes, trimmed)
-	}
-	return roleAttributes
 }
 
 func normalizeLogLevel(level string) string {

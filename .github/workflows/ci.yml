@@ -22,7 +22,7 @@ jobs:
         uses: bufbuild/buf-setup-action@v1
 
       - name: Generate protobuf bindings
-        run: buf generate --include-imports buf.build/agynio/api --path agynio/api/runner/v1 --path agynio/api/ziti_management/v1 --template ./buf.gen.yaml
+        run: buf generate --include-imports buf.build/agynio/api --path agynio/api/runner/v1 --path agynio/api/runners/v1 --path agynio/api/gateway/v1 --template ./buf.gen.yaml
 
       - name: Run tests
         run: go test ./...
@@ -60,6 +60,9 @@ jobs:
           terraform_version: 1.6.6
 
       - name: Bootstrap cluster
+        env:
+          # Temporary: pre-provisioned runner identity ID from bootstrap; remove after enrollment migration.
+          TF_VAR_k8s_runner_identity_id: 439e0da2-88cd-46d7-bb9c-56c723c15606
         run: cd bootstrap && ./apply.sh -y
 
       - name: Configure kubeconfig
