@@ -19,8 +19,9 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/status"
 
+	runnersgatewayv1 "github.com/agynio/k8s-runner/internal/.gen/agynio/api/gateway/v1"
 	runnerv1 "github.com/agynio/k8s-runner/internal/.gen/agynio/api/runner/v1"
-	zitimgmtv1 "github.com/agynio/k8s-runner/internal/.gen/agynio/api/ziti_management/v1"
+	runnersv1 "github.com/agynio/k8s-runner/internal/.gen/agynio/api/runners/v1"
 	"github.com/agynio/k8s-runner/internal/config"
 	"github.com/agynio/k8s-runner/internal/kube"
 	"github.com/agynio/k8s-runner/internal/logging"
@@ -30,7 +31,6 @@ import (
 const (
 	retryInitialBackoff = 1 * time.Second
 	retryMaxBackoff     = 15 * time.Second
-	cleanupTimeout      = 10 * time.Second
 )
 
 func main() {
@@ -75,8 +75,6 @@ func run() error {
 
 	var wg sync.WaitGroup
 	errCh := make(chan error, 2)
-	var zitiMgmtClient zitimgmtv1.ZitiManagementServiceClient
-	var identityResponse *zitimgmtv1.CreateRunnerIdentityResponse
 
 	startServe := func(listener net.Listener, label string) {
 		wg.Add(1)
@@ -101,30 +99,30 @@ func run() error {
 	startServe(listener, "tcp")
 
 	if cfg.ZitiEnabled {
-		zitiConn, err := grpc.DialContext(ctx, cfg.ZitiManagementAddress, grpc.WithTransportCredentials(insecure.NewCredentials()))
+		gatewayConn, err := grpc.DialContext(ctx, cfg.GatewayAddress, grpc.WithTransportCredentials(insecure.NewCredentials()))
 		if err != nil {
-			return fmt.Errorf("dial ziti management: %w", err)
+			return fmt.Errorf("dial gateway: %w", err)
 		}
-		defer zitiConn.Close()
+		defer gatewayConn.Close()
 
-		zitiMgmtClient = zitimgmtv1.NewZitiManagementServiceClient(zitiConn)
+		gatewayClient := runnersgatewayv1.NewRunnersGatewayClient(gatewayConn)
 
 		enrollmentCtx, cancel := context.WithTimeout(ctx, cfg.ZitiEnrollmentTimeout)
 		defer cancel()
 
-		if err := retryWithBackoff(enrollmentCtx, logger, "ziti enrollment", func(attemptCtx context.Context) error {
+		var enrollResponse *runnersv1.EnrollRunnerResponse
+		if err := retryWithBackoff(enrollmentCtx, logger, "gateway enrollment", func(attemptCtx context.Context) error {
 			var requestErr error
-			identityResponse, requestErr = zitiMgmtClient.CreateRunnerIdentity(attemptCtx, &zitimgmtv1.CreateRunnerIdentityRequest{
-				RunnerId:       cfg.RunnerID,
-				RoleAttributes: cfg.ZitiRoleAttributes,
+			enrollResponse, requestErr = gatewayClient.EnrollRunner(attemptCtx, &runnersv1.EnrollRunnerRequest{
+				ServiceToken: cfg.ServiceToken,
 			})
 			return requestErr
 		}); err != nil {
-			return fmt.Errorf("create ziti runner identity: %w", err)
+			return fmt.Errorf("enroll runner via gateway: %w", err)
 		}
 
 		zitiConfig := &ziti.Config{}
-		if err := json.Unmarshal(identityResponse.IdentityJson, zitiConfig); err != nil {
+		if err := json.Unmarshal([]byte(enrollResponse.IdentityJson), zitiConfig); err != nil {
 			return fmt.Errorf("parse ziti identity: %w", err)
 		}
 
@@ -134,9 +132,9 @@ func run() error {
 		}
 		defer zitiContext.Close()
 
-		zitiListener, err := zitiContext.ListenWithOptions(identityResponse.ZitiServiceName, ziti.DefaultListenOptions())
+		zitiListener, err := zitiContext.ListenWithOptions(enrollResponse.ServiceName, ziti.DefaultListenOptions())
 		if err != nil {
-			return fmt.Errorf("listen on ziti service %s: %w", identityResponse.ZitiServiceName, err)
+			return fmt.Errorf("listen on ziti service %s: %w", enrollResponse.ServiceName, err)
 		}
 		defer zitiListener.Close()
 		startServe(zitiListener, "ziti")
@@ -150,16 +148,6 @@ func run() error {
 	case <-ctx.Done():
 		logger.Info("shutting down")
 		grpcServer.GracefulStop()
-		if identityResponse != nil && zitiMgmtClient != nil {
-			cleanupCtx, cancel := context.WithTimeout(context.Background(), cleanupTimeout)
-			defer cancel()
-			if _, err := zitiMgmtClient.DeleteRunnerIdentity(cleanupCtx, &zitimgmtv1.DeleteRunnerIdentityRequest{
-				ZitiIdentityId: identityResponse.ZitiIdentityId,
-				ZitiServiceId:  identityResponse.ZitiServiceId,
-			}); err != nil {
-				logger.Warn("failed to delete ziti runner identity", zap.Error(err))
-			}
-		}
 	}
 
 	wg.Wait()

@@ -2,11 +2,8 @@ package config
 
 import (
 	"os"
-	"reflect"
 	"testing"
 )
-
-const testRunnerID = "123e4567-e89b-12d3-a456-426614174000"
 
 func TestLoadZitiEnrollmentTimeoutDefault(t *testing.T) {
 	setBaseEnv(t)
@@ -33,55 +30,42 @@ func TestLoadZitiEnrollmentTimeoutInvalid(t *testing.T) {
 	}
 }
 
-func TestLoadRunnerIDRequiredWhenZitiEnabled(t *testing.T) {
+func TestLoadServiceTokenRequiredWhenZitiEnabled(t *testing.T) {
 	setBaseEnv(t)
 	t.Setenv("ZITI_ENABLED", "true")
-	unsetEnv(t, "RUNNER_ID")
+	unsetEnv(t, "SERVICE_TOKEN")
 
 	_, err := Load()
 	if err == nil {
-		t.Fatal("expected error for missing RUNNER_ID")
+		t.Fatal("expected error for missing SERVICE_TOKEN")
 	}
 }
 
-func TestLoadRunnerIDInvalid(t *testing.T) {
+func TestLoadGatewayAddressDefault(t *testing.T) {
 	setBaseEnv(t)
 	t.Setenv("ZITI_ENABLED", "true")
-	t.Setenv("RUNNER_ID", "not-a-uuid")
-
-	_, err := Load()
-	if err == nil {
-		t.Fatal("expected error for invalid RUNNER_ID")
-	}
-}
-
-func TestLoadZitiRoleAttributesDefault(t *testing.T) {
-	setBaseEnv(t)
-	t.Setenv("ZITI_ENABLED", "true")
-	unsetEnv(t, "ZITI_ROLE_ATTRIBUTES")
+	unsetEnv(t, "GATEWAY_ADDRESS")
 
 	cfg, err := Load()
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	expected := []string{"runners"}
-	if !reflect.DeepEqual(cfg.ZitiRoleAttributes, expected) {
-		t.Fatalf("expected ziti role attributes %v, got %v", expected, cfg.ZitiRoleAttributes)
+	if cfg.GatewayAddress != defaultGatewayAddress {
+		t.Fatalf("expected gateway address %s, got %s", defaultGatewayAddress, cfg.GatewayAddress)
 	}
 }
 
-func TestLoadZitiRoleAttributesCustom(t *testing.T) {
+func TestLoadGatewayAddressCustom(t *testing.T) {
 	setBaseEnv(t)
 	t.Setenv("ZITI_ENABLED", "true")
-	t.Setenv("ZITI_ROLE_ATTRIBUTES", "runners, prod,staging")
+	t.Setenv("GATEWAY_ADDRESS", "gateway.internal:1234")
 
 	cfg, err := Load()
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	expected := []string{"runners", "prod", "staging"}
-	if !reflect.DeepEqual(cfg.ZitiRoleAttributes, expected) {
-		t.Fatalf("expected ziti role attributes %v, got %v", expected, cfg.ZitiRoleAttributes)
+	if cfg.GatewayAddress != "gateway.internal:1234" {
+		t.Fatalf("expected gateway address %s, got %s", "gateway.internal:1234", cfg.GatewayAddress)
 	}
 }
 
@@ -92,9 +76,8 @@ func setBaseEnv(t *testing.T) {
 	t.Setenv("PVC_STORAGE_SIZE", defaultStorageSize)
 	t.Setenv("PVC_STORAGE_CLASS", "")
 	t.Setenv("LOG_LEVEL", defaultLogLevel)
-	t.Setenv("ZITI_MANAGEMENT_ADDRESS", defaultZitiManagementAddress)
-	t.Setenv("RUNNER_ID", testRunnerID)
-	t.Setenv("ZITI_ROLE_ATTRIBUTES", defaultZitiRoleAttributes)
+	t.Setenv("GATEWAY_ADDRESS", defaultGatewayAddress)
+	t.Setenv("SERVICE_TOKEN", "test-service-token")
 }
 
 func unsetEnv(t *testing.T, key string) {

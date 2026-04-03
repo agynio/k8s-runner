@@ -93,10 +93,10 @@ env:
     value: "10Gi"
   - name: ZITI_ENABLED
     value: "false"
-  - name: ZITI_MANAGEMENT_ADDRESS
-    value: "ziti-management:50051"
-  - name: ZITI_ROLE_ATTRIBUTES
-    value: "runners"
+  - name: GATEWAY_ADDRESS
+    value: "gateway:8080"
+  - name: SERVICE_TOKEN
+    value: ""
   - name: ZITI_ENROLLMENT_TIMEOUT
     value: "2m"
   - name: LOG_LEVEL
