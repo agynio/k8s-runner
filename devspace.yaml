@@ -115,10 +115,20 @@ deployments:
         name: component-chart
         repo: https://charts.devspace.sh
       values:
+        securityContext:
+          runAsUser: 1000
+          fsGroup: 1000
         containers:
           - image: ${E2E_IMAGE}
             command: ["sleep"]
             args: ["infinity"]
+            volumeMounts:
+              - containerPath: /opt/app/data
+                volume:
+                  name: data
+        volumes:
+          - name: data
+            emptyDir: {}
         labels:
           app.kubernetes.io/name: k8s-runner-e2e
 
