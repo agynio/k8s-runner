@@ -2,6 +2,8 @@ package server
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -20,6 +22,16 @@ import (
 	runnerv1 "github.com/agynio/k8s-runner/internal/.gen/agynio/api/runner/v1"
 )
 
+type dockerConfig struct {
+	Auths map[string]dockerAuth `json:"auths"`
+}
+
+type dockerAuth struct {
+	Username string `json:"username"`
+	Password string `json:"password"`
+	Auth     string `json:"auth"`
+}
+
 func (s *Server) StartWorkload(ctx context.Context, req *runnerv1.StartWorkloadRequest) (*runnerv1.StartWorkloadResponse, error) {
 	if req == nil || req.Main == nil {
 		return nil, status.Error(codes.InvalidArgument, "main_container_required")
@@ -36,6 +48,11 @@ func (s *Server) StartWorkload(ctx context.Context, req *runnerv1.StartWorkloadR
 		return nil, status.Errorf(codes.InvalidArgument, "invalid_label: %v", err)
 	}
 
+	imagePullSecrets, secretNames, err := s.buildImagePullSecrets(ctx, id, req.ImagePullCredentials)
+	if err != nil {
+		return nil, err
+	}
+
 	volumes, pvcNames, err := s.buildVolumes(ctx, req.Volumes, labels)
 	if err != nil {
 		return nil, err
@@ -49,6 +66,9 @@ func (s *Server) StartWorkload(ctx context.Context, req *runnerv1.StartWorkloadR
 	annotations := map[string]string{}
 	if len(pvcNames) > 0 {
 		annotations[pvcAnnotationKey] = strings.Join(pvcNames, ",")
+	}
+	if len(secretNames) > 0 {
+		annotations[secretAnnotationKey] = strings.Join(secretNames, ",")
 	}
 
 	pod := &corev1.Pod{
@@ -66,6 +86,10 @@ func (s *Server) StartWorkload(ctx context.Context, req *runnerv1.StartWorkloadR
 		},
 	}
 
+	if len(imagePullSecrets) > 0 {
+		pod.Spec.ImagePullSecrets = imagePullSecrets
+	}
+
 	if req.DnsConfig != nil && len(req.DnsConfig.Nameservers) > 0 {
 		pod.Spec.DNSPolicy = corev1.DNSNone
 		pod.Spec.DNSConfig = &corev1.PodDNSConfig{
@@ -75,6 +99,7 @@ func (s *Server) StartWorkload(ctx context.Context, req *runnerv1.StartWorkloadR
 	}
 
 	if _, err := s.clientset.CoreV1().Pods(s.namespace).Create(ctx, pod, metav1.CreateOptions{}); err != nil {
+		s.deleteImagePullSecrets(ctx, id, secretNames)
 		return nil, grpcErrorFromKube(s.logger, err, codes.Internal)
 	}
 
@@ -105,6 +130,12 @@ func (s *Server) StopWorkload(ctx context.Context, req *runnerv1.StopWorkloadReq
 
 	podName := podNameFromID(workloadID)
 
+	pod, err := s.clientset.CoreV1().Pods(s.namespace).Get(ctx, podName, metav1.GetOptions{})
+	if err != nil {
+		return nil, grpcErrorFromKube(s.logger, err, codes.Internal)
+	}
+	secretNames := parseSecretAnnotation(pod.Annotations)
+
 	deleteOptions := metav1.DeleteOptions{}
 	if grace := int64(req.GetTimeoutSec()); grace > 0 {
 		deleteOptions.GracePeriodSeconds = &grace
@@ -112,6 +143,8 @@ func (s *Server) StopWorkload(ctx context.Context, req *runnerv1.StopWorkloadReq
 	if err := s.clientset.CoreV1().Pods(s.namespace).Delete(ctx, podName, deleteOptions); err != nil {
 		return nil, grpcErrorFromKube(s.logger, err, codes.Internal)
 	}
+
+	s.deleteImagePullSecrets(ctx, workloadID, secretNames)
 
 	return &runnerv1.StopWorkloadResponse{}, nil
 }
@@ -128,6 +161,7 @@ func (s *Server) RemoveWorkload(ctx context.Context, req *runnerv1.RemoveWorkloa
 	if err != nil {
 		return nil, grpcErrorFromKube(s.logger, err, codes.Internal)
 	}
+	secretNames := parseSecretAnnotation(pod.Annotations)
 
 	var grace *int64
 	if req.GetForce() {
@@ -138,6 +172,8 @@ func (s *Server) RemoveWorkload(ctx context.Context, req *runnerv1.RemoveWorkloa
 	if err := s.clientset.CoreV1().Pods(s.namespace).Delete(ctx, podName, deleteOptions); err != nil {
 		return nil, grpcErrorFromKube(s.logger, err, codes.Internal)
 	}
+
+	s.deleteImagePullSecrets(ctx, workloadID, secretNames)
 
 	if req.GetRemoveVolumes() {
 		pvcNames := parsePVCAnnotation(pod.Annotations)
@@ -240,6 +276,116 @@ func buildLabels(workloadID string, additional map[string]string) (map[string]st
 	}
 
 	return labels, nil
+}
+
+func buildDockerConfigJSON(registry, username, password string) ([]byte, error) {
+	auth := base64.StdEncoding.EncodeToString([]byte(fmt.Sprintf("%s:%s", username, password)))
+	config := dockerConfig{
+		Auths: map[string]dockerAuth{
+			registry: {
+				Username: username,
+				Password: password,
+				Auth:     auth,
+			},
+		},
+	}
+	return json.Marshal(config)
+}
+
+func (s *Server) buildImagePullSecrets(
+	ctx context.Context,
+	workloadID string,
+	credentials []*runnerv1.ImagePullCredential,
+) ([]corev1.LocalObjectReference, []string, error) {
+	if len(credentials) == 0 {
+		return nil, nil, nil
+	}
+
+	type validatedCredential struct {
+		registry string
+		username string
+		password string
+	}
+
+	validated := make([]validatedCredential, 0, len(credentials))
+	for _, credential := range credentials {
+		if credential == nil {
+			return nil, nil, status.Error(codes.InvalidArgument, "image_pull_credential_required")
+		}
+		registry := strings.TrimSpace(credential.GetRegistry())
+		if registry == "" {
+			return nil, nil, status.Error(codes.InvalidArgument, "image_pull_registry_required")
+		}
+		username := strings.TrimSpace(credential.GetUsername())
+		if username == "" {
+			return nil, nil, status.Error(codes.InvalidArgument, "image_pull_username_required")
+		}
+		password := credential.GetPassword()
+		if password == "" {
+			return nil, nil, status.Error(codes.InvalidArgument, "image_pull_password_required")
+		}
+		validated = append(validated, validatedCredential{
+			registry: registry,
+			username: username,
+			password: password,
+		})
+	}
+
+	secretRefs := make([]corev1.LocalObjectReference, 0, len(validated))
+	secretNames := make([]string, 0, len(validated))
+	for idx, credential := range validated {
+		secretName := fmt.Sprintf("workload-%s-pull-%d", workloadID, idx)
+		configJSON, err := buildDockerConfigJSON(credential.registry, credential.username, credential.password)
+		if err != nil {
+			s.deleteImagePullSecrets(ctx, workloadID, secretNames)
+			return nil, nil, status.Errorf(codes.Internal, "docker_config_json_failed: %v", err)
+		}
+
+		secret := &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      secretName,
+				Namespace: s.namespace,
+				Labels: map[string]string{
+					managedByLabelKey:  managedByLabelValue,
+					workloadIDLabelKey: workloadID,
+				},
+			},
+			Type: corev1.SecretTypeDockerConfigJson,
+			Data: map[string][]byte{
+				corev1.DockerConfigJsonKey: configJSON,
+			},
+		}
+
+		if _, err := s.clientset.CoreV1().Secrets(s.namespace).Create(ctx, secret, metav1.CreateOptions{}); err != nil {
+			s.deleteImagePullSecrets(ctx, workloadID, secretNames)
+			return nil, nil, grpcErrorFromKube(s.logger, err, codes.Internal)
+		}
+
+		secretRefs = append(secretRefs, corev1.LocalObjectReference{Name: secretName})
+		secretNames = append(secretNames, secretName)
+	}
+
+	return secretRefs, secretNames, nil
+}
+
+func (s *Server) deleteImagePullSecrets(ctx context.Context, workloadID string, secretNames []string) {
+	if len(secretNames) == 0 {
+		return
+	}
+
+	var deleteErrs []error
+	for _, secretName := range secretNames {
+		if err := s.clientset.CoreV1().Secrets(s.namespace).Delete(ctx, secretName, metav1.DeleteOptions{}); err != nil {
+			if apierrors.IsNotFound(err) {
+				continue
+			}
+			deleteErrs = append(deleteErrs, fmt.Errorf("delete secret %s: %w", secretName, err))
+		}
+	}
+
+	if len(deleteErrs) > 0 {
+		s.logger.Error("failed to delete pull secrets", zap.String("workload_id", workloadID), zap.Errors("errors", deleteErrs))
+	}
 }
 
 func (s *Server) buildVolumes(ctx context.Context, volumes []*runnerv1.VolumeSpec, labels map[string]string) ([]corev1.Volume, []string, error) {
@@ -490,11 +636,11 @@ func buildContainer(spec *runnerv1.ContainerSpec, fallbackName string, volumeLoo
 	return container, nil
 }
 
-func parsePVCAnnotation(annotations map[string]string) []string {
+func parseAnnotationList(annotations map[string]string, key string) []string {
 	if annotations == nil {
 		return nil
 	}
-	value := strings.TrimSpace(annotations[pvcAnnotationKey])
+	value := strings.TrimSpace(annotations[key])
 	if value == "" {
 		return nil
 	}
@@ -507,6 +653,14 @@ func parsePVCAnnotation(annotations map[string]string) []string {
 		}
 	}
 	return result
+}
+
+func parsePVCAnnotation(annotations map[string]string) []string {
+	return parseAnnotationList(annotations, pvcAnnotationKey)
+}
+
+func parseSecretAnnotation(annotations map[string]string) []string {
+	return parseAnnotationList(annotations, secretAnnotationKey)
 }
 
 type volumeInfo struct {

@@ -16,6 +16,7 @@ const (
 	managedByLabelValue    = "k8s-runner"
 	workloadIDLabelKey     = "agyn.io/workload-id"
 	pvcAnnotationKey       = "agyn.io/pvc-names"
+	secretAnnotationKey    = "agyn.io/pull-secret-names"
 	touchedAtAnnotationKey = "agyn.io/touched-at"
 )
 
