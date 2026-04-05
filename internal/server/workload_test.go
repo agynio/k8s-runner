@@ -2,6 +2,9 @@ package server
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -10,6 +13,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
 
@@ -41,6 +45,33 @@ func TestBuildLabelsRejectsInvalidKey(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatalf("expected error for invalid label key")
+	}
+}
+
+func TestBuildDockerConfigJSON(t *testing.T) {
+	payload, err := buildDockerConfigJSON("registry.example.com", "user", "pass")
+	if err != nil {
+		t.Fatalf("buildDockerConfigJSON returned error: %v", err)
+	}
+
+	var config dockerConfig
+	if err := json.Unmarshal(payload, &config); err != nil {
+		t.Fatalf("failed to unmarshal docker config: %v", err)
+	}
+
+	auth, ok := config.Auths["registry.example.com"]
+	if !ok {
+		t.Fatalf("expected registry auth entry")
+	}
+	if auth.Username != "user" {
+		t.Fatalf("expected username 'user', got %q", auth.Username)
+	}
+	if auth.Password != "pass" {
+		t.Fatalf("expected password 'pass', got %q", auth.Password)
+	}
+	expectedAuth := base64.StdEncoding.EncodeToString([]byte("user:pass"))
+	if auth.Auth != expectedAuth {
+		t.Fatalf("expected auth %q, got %q", expectedAuth, auth.Auth)
 	}
 }
 
@@ -359,6 +390,219 @@ func TestStartWorkloadMapsDnsConfig(t *testing.T) {
 	}
 }
 
+func TestStartWorkloadCreatesImagePullSecrets(t *testing.T) {
+	clientset := fake.NewSimpleClientset()
+	server := New(Options{
+		Clientset:   clientset,
+		Namespace:   "default",
+		StorageSize: "1Gi",
+		Logger:      zap.NewNop(),
+	})
+
+	ctx := context.Background()
+	credentials := []*runnerv1.ImagePullCredential{
+		{Registry: "registry.example.com", Username: "user", Password: "pass"},
+		{Registry: "registry.internal", Username: "robot", Password: "token"},
+	}
+	req := &runnerv1.StartWorkloadRequest{
+		Main:                 &runnerv1.ContainerSpec{Name: "main", Image: "busybox"},
+		ImagePullCredentials: credentials,
+	}
+
+	resp, err := server.StartWorkload(ctx, req)
+	if err != nil {
+		t.Fatalf("StartWorkload returned error: %v", err)
+	}
+	if resp == nil || resp.Id == "" {
+		t.Fatalf("expected response with id")
+	}
+
+	podName := podNameFromID(resp.Id)
+	pod, err := clientset.CoreV1().Pods("default").Get(ctx, podName, metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("expected pod created: %v", err)
+	}
+
+	expectedNames := []string{
+		fmt.Sprintf("workload-%s-pull-0", resp.Id),
+		fmt.Sprintf("workload-%s-pull-1", resp.Id),
+	}
+	if len(pod.Spec.ImagePullSecrets) != len(expectedNames) {
+		t.Fatalf("expected %d image pull secrets, got %d", len(expectedNames), len(pod.Spec.ImagePullSecrets))
+	}
+	gotNames := make([]string, 0, len(pod.Spec.ImagePullSecrets))
+	for _, ref := range pod.Spec.ImagePullSecrets {
+		gotNames = append(gotNames, ref.Name)
+	}
+	if !reflect.DeepEqual(gotNames, expectedNames) {
+		t.Fatalf("expected image pull secret names %#v, got %#v", expectedNames, gotNames)
+	}
+	if pod.Annotations[secretAnnotationKey] != strings.Join(expectedNames, ",") {
+		t.Fatalf("expected secret annotation %q, got %q", strings.Join(expectedNames, ","), pod.Annotations[secretAnnotationKey])
+	}
+
+	for idx, secretName := range expectedNames {
+		secret, err := clientset.CoreV1().Secrets("default").Get(ctx, secretName, metav1.GetOptions{})
+		if err != nil {
+			t.Fatalf("expected secret %s: %v", secretName, err)
+		}
+		if secret.Type != corev1.SecretTypeDockerConfigJson {
+			t.Fatalf("expected dockerconfigjson secret type, got %q", secret.Type)
+		}
+		if secret.Labels[managedByLabelKey] != managedByLabelValue {
+			t.Fatalf("expected managed-by label %q, got %q", managedByLabelValue, secret.Labels[managedByLabelKey])
+		}
+		if secret.Labels[workloadIDLabelKey] != resp.Id {
+			t.Fatalf("expected workload id label %q, got %q", resp.Id, secret.Labels[workloadIDLabelKey])
+		}
+		expectedConfig, err := buildDockerConfigJSON(credentials[idx].Registry, credentials[idx].Username, credentials[idx].Password)
+		if err != nil {
+			t.Fatalf("buildDockerConfigJSON returned error: %v", err)
+		}
+		if !reflect.DeepEqual(secret.Data[corev1.DockerConfigJsonKey], expectedConfig) {
+			t.Fatalf("expected docker config data to match")
+		}
+	}
+}
+
+func TestStartWorkloadNoCredentials(t *testing.T) {
+	clientset := fake.NewSimpleClientset()
+	server := New(Options{
+		Clientset:   clientset,
+		Namespace:   "default",
+		StorageSize: "1Gi",
+		Logger:      zap.NewNop(),
+	})
+
+	ctx := context.Background()
+	req := &runnerv1.StartWorkloadRequest{
+		Main: &runnerv1.ContainerSpec{Name: "main", Image: "busybox"},
+	}
+
+	resp, err := server.StartWorkload(ctx, req)
+	if err != nil {
+		t.Fatalf("StartWorkload returned error: %v", err)
+	}
+	if resp == nil || resp.Id == "" {
+		t.Fatalf("expected response with id")
+	}
+
+	podName := podNameFromID(resp.Id)
+	pod, err := clientset.CoreV1().Pods("default").Get(ctx, podName, metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("expected pod created: %v", err)
+	}
+	if len(pod.Spec.ImagePullSecrets) != 0 {
+		t.Fatalf("expected no image pull secrets, got %d", len(pod.Spec.ImagePullSecrets))
+	}
+	if _, ok := pod.Annotations[secretAnnotationKey]; ok {
+		t.Fatalf("expected no secret annotation")
+	}
+
+	secrets, err := clientset.CoreV1().Secrets("default").List(ctx, metav1.ListOptions{})
+	if err != nil {
+		t.Fatalf("expected secrets list: %v", err)
+	}
+	if len(secrets.Items) != 0 {
+		t.Fatalf("expected no secrets, got %d", len(secrets.Items))
+	}
+}
+
+func TestStartWorkloadRejectsIncompleteCredential(t *testing.T) {
+	clientset := fake.NewSimpleClientset()
+	server := New(Options{
+		Clientset:   clientset,
+		Namespace:   "default",
+		StorageSize: "1Gi",
+		Logger:      zap.NewNop(),
+	})
+
+	ctx := context.Background()
+	req := &runnerv1.StartWorkloadRequest{
+		Main: &runnerv1.ContainerSpec{Name: "main", Image: "busybox"},
+		ImagePullCredentials: []*runnerv1.ImagePullCredential{
+			{Username: "user", Password: "pass"},
+		},
+	}
+
+	_, err := server.StartWorkload(ctx, req)
+	if err == nil {
+		t.Fatalf("expected error for incomplete credential")
+	}
+	st, ok := status.FromError(err)
+	if !ok || st.Code() != codes.InvalidArgument {
+		t.Fatalf("expected invalid argument error, got %v", err)
+	}
+}
+
+func TestStopWorkloadDeletesPullSecrets(t *testing.T) {
+	clientset := fake.NewSimpleClientset()
+	server := New(Options{
+		Clientset:   clientset,
+		Namespace:   "default",
+		StorageSize: "1Gi",
+		Logger:      zap.NewNop(),
+	})
+
+	ctx := context.Background()
+	startReq := &runnerv1.StartWorkloadRequest{
+		Main: &runnerv1.ContainerSpec{Name: "main", Image: "busybox"},
+		ImagePullCredentials: []*runnerv1.ImagePullCredential{
+			{Registry: "registry.example.com", Username: "user", Password: "pass"},
+		},
+	}
+
+	resp, err := server.StartWorkload(ctx, startReq)
+	if err != nil {
+		t.Fatalf("StartWorkload returned error: %v", err)
+	}
+
+	_, err = server.StopWorkload(ctx, &runnerv1.StopWorkloadRequest{WorkloadId: resp.Id})
+	if err != nil {
+		t.Fatalf("StopWorkload returned error: %v", err)
+	}
+
+	secretName := fmt.Sprintf("workload-%s-pull-0", resp.Id)
+	_, err = clientset.CoreV1().Secrets("default").Get(ctx, secretName, metav1.GetOptions{})
+	if err == nil || !apierrors.IsNotFound(err) {
+		t.Fatalf("expected secret %s to be deleted", secretName)
+	}
+}
+
+func TestRemoveWorkloadDeletesPullSecrets(t *testing.T) {
+	clientset := fake.NewSimpleClientset()
+	server := New(Options{
+		Clientset:   clientset,
+		Namespace:   "default",
+		StorageSize: "1Gi",
+		Logger:      zap.NewNop(),
+	})
+
+	ctx := context.Background()
+	startReq := &runnerv1.StartWorkloadRequest{
+		Main: &runnerv1.ContainerSpec{Name: "main", Image: "busybox"},
+		ImagePullCredentials: []*runnerv1.ImagePullCredential{
+			{Registry: "registry.example.com", Username: "user", Password: "pass"},
+		},
+	}
+
+	resp, err := server.StartWorkload(ctx, startReq)
+	if err != nil {
+		t.Fatalf("StartWorkload returned error: %v", err)
+	}
+
+	_, err = server.RemoveWorkload(ctx, &runnerv1.RemoveWorkloadRequest{WorkloadId: resp.Id})
+	if err != nil {
+		t.Fatalf("RemoveWorkload returned error: %v", err)
+	}
+
+	secretName := fmt.Sprintf("workload-%s-pull-0", resp.Id)
+	_, err = clientset.CoreV1().Secrets("default").Get(ctx, secretName, metav1.GetOptions{})
+	if err == nil || !apierrors.IsNotFound(err) {
+		t.Fatalf("expected secret %s to be deleted", secretName)
+	}
+}
+
 func TestParsePVCAnnotation(t *testing.T) {
 	if got := parsePVCAnnotation(nil); got != nil {
 		t.Fatalf("expected nil for nil annotations, got %#v", got)
@@ -368,5 +612,17 @@ func TestParsePVCAnnotation(t *testing.T) {
 	expected := []string{"pvc-a", "pvc-b"}
 	if !reflect.DeepEqual(got, expected) {
 		t.Fatalf("expected pvc list %#v, got %#v", expected, got)
+	}
+}
+
+func TestParseSecretAnnotation(t *testing.T) {
+	if got := parseSecretAnnotation(nil); got != nil {
+		t.Fatalf("expected nil for nil annotations, got %#v", got)
+	}
+
+	got := parseSecretAnnotation(map[string]string{secretAnnotationKey: " secret-a , , secret-b "})
+	expected := []string{"secret-a", "secret-b"}
+	if !reflect.DeepEqual(got, expected) {
+		t.Fatalf("expected secret list %#v, got %#v", expected, got)
 	}
 }
