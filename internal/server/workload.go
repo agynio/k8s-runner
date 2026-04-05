@@ -99,6 +99,7 @@ func (s *Server) StartWorkload(ctx context.Context, req *runnerv1.StartWorkloadR
 	}
 
 	if _, err := s.clientset.CoreV1().Pods(s.namespace).Create(ctx, pod, metav1.CreateOptions{}); err != nil {
+		s.deleteImagePullSecrets(ctx, id, secretNames)
 		return nil, grpcErrorFromKube(s.logger, err, codes.Internal)
 	}
 
@@ -319,7 +320,7 @@ func (s *Server) buildImagePullSecrets(
 		if username == "" {
 			return nil, nil, status.Error(codes.InvalidArgument, "image_pull_username_required")
 		}
-		password := strings.TrimSpace(credential.GetPassword())
+		password := credential.GetPassword()
 		if password == "" {
 			return nil, nil, status.Error(codes.InvalidArgument, "image_pull_password_required")
 		}
@@ -635,11 +636,11 @@ func buildContainer(spec *runnerv1.ContainerSpec, fallbackName string, volumeLoo
 	return container, nil
 }
 
-func parsePVCAnnotation(annotations map[string]string) []string {
+func parseAnnotationList(annotations map[string]string, key string) []string {
 	if annotations == nil {
 		return nil
 	}
-	value := strings.TrimSpace(annotations[pvcAnnotationKey])
+	value := strings.TrimSpace(annotations[key])
 	if value == "" {
 		return nil
 	}
@@ -654,23 +655,12 @@ func parsePVCAnnotation(annotations map[string]string) []string {
 	return result
 }
 
+func parsePVCAnnotation(annotations map[string]string) []string {
+	return parseAnnotationList(annotations, pvcAnnotationKey)
+}
+
 func parseSecretAnnotation(annotations map[string]string) []string {
-	if annotations == nil {
-		return nil
-	}
-	value := strings.TrimSpace(annotations[secretAnnotationKey])
-	if value == "" {
-		return nil
-	}
-	parts := strings.Split(value, ",")
-	result := make([]string, 0, len(parts))
-	for _, part := range parts {
-		name := strings.TrimSpace(part)
-		if name != "" {
-			result = append(result, name)
-		}
-	}
-	return result
+	return parseAnnotationList(annotations, secretAnnotationKey)
 }
 
 type volumeInfo struct {
