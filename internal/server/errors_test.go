@@ -9,6 +9,7 @@ import (
 	"google.golang.org/grpc/status"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/util/validation/field"
 )
 
 func TestGrpcErrorFromKubeIncludesStatusDetail(t *testing.T) {
@@ -25,10 +26,38 @@ func TestGrpcErrorFromKubeIncludesStatusDetail(t *testing.T) {
 			base: "resource not found",
 		},
 		{
+			name: "already_exists",
+			err:  apierrors.NewAlreadyExists(schema.GroupResource{Resource: "pods"}, "pod-1"),
+			code: codes.AlreadyExists,
+			base: "resource already exists",
+		},
+		{
+			name: "invalid",
+			err: apierrors.NewInvalid(
+				schema.GroupKind{Group: "core", Kind: "Pod"},
+				"pod-1",
+				field.ErrorList{field.Invalid(field.NewPath("spec").Child("node"), "bad", "invalid node")},
+			),
+			code: codes.InvalidArgument,
+			base: "invalid kubernetes request",
+		},
+		{
+			name: "unauthorized",
+			err:  apierrors.NewUnauthorized("token missing"),
+			code: codes.Unauthenticated,
+			base: "unauthenticated",
+		},
+		{
 			name: "forbidden",
 			err:  apierrors.NewForbidden(schema.GroupResource{Resource: "pods"}, "pod-1", errors.New("no access")),
 			code: codes.PermissionDenied,
 			base: "permission denied",
+		},
+		{
+			name: "conflict",
+			err:  apierrors.NewConflict(schema.GroupResource{Resource: "pods"}, "pod-1", errors.New("update conflict")),
+			code: codes.Aborted,
+			base: "resource conflict",
 		},
 	}
 
@@ -67,7 +96,7 @@ func TestGrpcErrorFromKubeFallbackMessage(t *testing.T) {
 	if st.Code() != codes.Internal {
 		t.Fatalf("expected code %s, got %s", codes.Internal, st.Code())
 	}
-	if st.Message() != "kubernetes request failed" {
+	if st.Message() != "kubernetes request failed: boom" {
 		t.Fatalf("expected fallback message, got %q", st.Message())
 	}
 }

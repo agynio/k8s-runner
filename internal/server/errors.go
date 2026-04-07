@@ -19,6 +19,9 @@ func grpcErrorFromKube(logger *zap.Logger, err error, fallback codes.Code) error
 	}
 
 	message := kubeStatusMessage(err)
+	if message == "" {
+		message = strings.TrimSpace(err.Error())
+	}
 
 	switch {
 	case apierrors.IsNotFound(err):
