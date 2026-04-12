@@ -19,7 +19,13 @@ RUN go mod download
 COPY buf.gen.yaml ./
 RUN git clone https://github.com/agynio/api.git /tmp/agynio-api && \
     git -C /tmp/agynio-api checkout ec008b1e2dfacec3e4d85776729fe1c3d5f2c42d
-RUN buf generate --include-imports --path proto/agynio/api/runner/v1 --path proto/agynio/api/runners/v1 --path proto/agynio/api/gateway/v1 --template ./buf.gen.yaml /tmp/agynio-api -o .
+RUN cd /tmp/agynio-api && \
+    buf generate --include-imports \
+      --path proto/agynio/api/runner/v1 \
+      --path proto/agynio/api/runners/v1 \
+      --path proto/agynio/api/gateway/v1 \
+      --template /src/buf.gen.yaml \
+      -o /src
 COPY . .
 ARG TARGETOS TARGETARCH
 ENV CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH
