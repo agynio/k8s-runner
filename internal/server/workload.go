@@ -40,15 +40,20 @@ func (s *Server) StartWorkload(ctx context.Context, req *runnerv1.StartWorkloadR
 		return nil, status.Error(codes.InvalidArgument, "main_container_image_required")
 	}
 
-	id := uuid.NewString()
-	podName := podNameFromID(id)
+	workloadID := strings.TrimSpace(req.GetWorkloadId())
+	if workloadID == "" {
+		workloadID = uuid.NewString()
+	} else if _, err := uuid.Parse(workloadID); err != nil {
+		return nil, status.Error(codes.InvalidArgument, "workload_id_invalid")
+	}
+	podName := podNameFromID(workloadID)
 
-	labels, err := buildLabels(id, req.AdditionalProperties, req.Labels)
+	labels, err := buildLabels(workloadID, req.AdditionalProperties, req.Labels)
 	if err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "invalid_label: %v", err)
 	}
 
-	imagePullSecrets, secretNames, err := s.buildImagePullSecrets(ctx, id, req.ImagePullCredentials)
+	imagePullSecrets, secretNames, err := s.buildImagePullSecrets(ctx, workloadID, req.ImagePullCredentials)
 	if err != nil {
 		return nil, err
 	}
@@ -99,7 +104,7 @@ func (s *Server) StartWorkload(ctx context.Context, req *runnerv1.StartWorkloadR
 	}
 
 	if _, err := s.clientset.CoreV1().Pods(s.namespace).Create(ctx, pod, metav1.CreateOptions{}); err != nil {
-		s.deleteImagePullSecrets(ctx, id, secretNames)
+		s.deleteImagePullSecrets(ctx, workloadID, secretNames)
 		return nil, grpcErrorFromKube(s.logger, err, codes.Internal)
 	}
 
@@ -113,7 +118,7 @@ func (s *Server) StartWorkload(ctx context.Context, req *runnerv1.StartWorkloadR
 	}
 
 	return &runnerv1.StartWorkloadResponse{
-		Id: id,
+		Id: workloadID,
 		Containers: &runnerv1.WorkloadContainers{
 			Main:     podName,
 			Sidecars: sidecars,

@@ -312,6 +312,68 @@ func TestBuildContainersRejectsInitDuplicateNames(t *testing.T) {
 	}
 }
 
+func TestStartWorkloadUsesProvidedWorkloadID(t *testing.T) {
+	clientset := fake.NewSimpleClientset()
+	server := New(Options{
+		Clientset:   clientset,
+		Namespace:   "default",
+		StorageSize: "1Gi",
+		Logger:      zap.NewNop(),
+	})
+
+	ctx := context.Background()
+	workloadID := "2db3f1b6-7d0b-4c28-8ed4-5eb9803ccf12"
+	req := &runnerv1.StartWorkloadRequest{
+		WorkloadId: workloadID,
+		Main:       &runnerv1.ContainerSpec{Name: "main", Image: "busybox"},
+	}
+
+	resp, err := server.StartWorkload(ctx, req)
+	if err != nil {
+		t.Fatalf("StartWorkload returned error: %v", err)
+	}
+	if resp.GetId() != workloadID {
+		t.Fatalf("expected workload id %q, got %q", workloadID, resp.GetId())
+	}
+
+	podName := podNameFromID(workloadID)
+	pod, err := clientset.CoreV1().Pods("default").Get(ctx, podName, metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("expected pod created: %v", err)
+	}
+	if pod.Labels[workloadIDLabelKey] != workloadID {
+		t.Fatalf("expected workload label %q, got %q", workloadID, pod.Labels[workloadIDLabelKey])
+	}
+}
+
+func TestStartWorkloadRejectsInvalidWorkloadID(t *testing.T) {
+	clientset := fake.NewSimpleClientset()
+	server := New(Options{
+		Clientset:   clientset,
+		Namespace:   "default",
+		StorageSize: "1Gi",
+		Logger:      zap.NewNop(),
+	})
+
+	ctx := context.Background()
+	req := &runnerv1.StartWorkloadRequest{
+		WorkloadId: "not-a-uuid",
+		Main:       &runnerv1.ContainerSpec{Name: "main", Image: "busybox"},
+	}
+
+	_, err := server.StartWorkload(ctx, req)
+	if err == nil {
+		t.Fatalf("expected error for invalid workload id")
+	}
+	st, ok := status.FromError(err)
+	if !ok || st.Code() != codes.InvalidArgument {
+		t.Fatalf("expected invalid argument error, got %v", err)
+	}
+	if !strings.Contains(st.Message(), "workload_id_invalid") {
+		t.Fatalf("expected workload id invalid error, got %q", st.Message())
+	}
+}
+
 func TestStartWorkloadBuildsInitContainers(t *testing.T) {
 	clientset := fake.NewSimpleClientset()
 	server := New(Options{
