@@ -18,7 +18,7 @@ COPY go.mod go.sum ./
 RUN go mod download
 COPY buf.gen.yaml ./
 RUN git clone https://github.com/agynio/api.git /tmp/agynio-api && \
-    git -C /tmp/agynio-api checkout ec008b1e2dfacec3e4d85776729fe1c3d5f2c42d
+    git -C /tmp/agynio-api checkout fda3ad21889b1333d517a39a82e000f1fa7ed997
 RUN cd /tmp/agynio-api && \
     buf generate --include-imports \
       --path proto/agynio/api/runner/v1 \
