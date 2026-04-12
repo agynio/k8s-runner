@@ -30,7 +30,8 @@ func (s *Server) GetWorkloadLabels(ctx context.Context, req *runnerv1.GetWorkloa
 }
 
 func (s *Server) ListWorkloads(ctx context.Context, _ *runnerv1.ListWorkloadsRequest) (*runnerv1.ListWorkloadsResponse, error) {
-	list, err := s.clientset.CoreV1().Pods(s.namespace).List(ctx, metav1.ListOptions{})
+	selector := labels.Set(map[string]string{managedByLabelKey: managedByLabelValue}).AsSelector().String()
+	list, err := s.clientset.CoreV1().Pods(s.namespace).List(ctx, metav1.ListOptions{LabelSelector: selector})
 	if err != nil {
 		return nil, grpcErrorFromKube(s.logger, err, codes.Internal)
 	}
@@ -91,7 +92,8 @@ func (s *Server) ListWorkloadsByVolume(ctx context.Context, req *runnerv1.ListWo
 }
 
 func (s *Server) ListVolumes(ctx context.Context, _ *runnerv1.ListVolumesRequest) (*runnerv1.ListVolumesResponse, error) {
-	list, err := s.clientset.CoreV1().PersistentVolumeClaims(s.namespace).List(ctx, metav1.ListOptions{})
+	selector := labels.Set(map[string]string{managedByLabelKey: managedByLabelValue}).AsSelector().String()
+	list, err := s.clientset.CoreV1().PersistentVolumeClaims(s.namespace).List(ctx, metav1.ListOptions{LabelSelector: selector})
 	if err != nil {
 		return nil, grpcErrorFromKube(s.logger, err, codes.Internal)
 	}

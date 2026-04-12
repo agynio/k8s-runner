@@ -291,15 +291,16 @@ func addLabel(target map[string]string, labelKey, value string) error {
 	if labelKey == "" {
 		return fmt.Errorf("empty label key")
 	}
+	if labelKey == managedByLabelKey || labelKey == workloadIDLabelKey {
+		return fmt.Errorf("reserved label key %q", labelKey)
+	}
 	if errs := validation.IsQualifiedName(labelKey); len(errs) > 0 {
 		return fmt.Errorf("invalid label key %q: %s", labelKey, strings.Join(errs, ", "))
 	}
 	if errs := validation.IsValidLabelValue(value); len(errs) > 0 {
 		return fmt.Errorf("invalid label value for %q: %s", labelKey, strings.Join(errs, ", "))
 	}
-	if target != nil {
-		target[labelKey] = value
-	}
+	target[labelKey] = value
 	return nil
 }
 

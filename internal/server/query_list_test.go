@@ -19,6 +19,7 @@ func TestListWorkloadsReturnsLabeledPods(t *testing.T) {
 				Name:      "pod-1",
 				Namespace: "default",
 				Labels: map[string]string{
+					managedByLabelKey:   managedByLabelValue,
 					workloadKeyLabelKey: "workload-1",
 				},
 			},
@@ -28,7 +29,8 @@ func TestListWorkloadsReturnsLabeledPods(t *testing.T) {
 				Name:      "pod-2",
 				Namespace: "default",
 				Labels: map[string]string{
-					"ignored": "value",
+					managedByLabelKey: managedByLabelValue,
+					"ignored":         "value",
 				},
 			},
 		},
@@ -64,6 +66,7 @@ func TestListVolumesReturnsLabeledPVCs(t *testing.T) {
 				Name:      "pvc-1",
 				Namespace: "default",
 				Labels: map[string]string{
+					managedByLabelKey: managedByLabelValue,
 					volumeKeyLabelKey: "volume-1",
 				},
 			},
@@ -73,7 +76,8 @@ func TestListVolumesReturnsLabeledPVCs(t *testing.T) {
 				Name:      "pvc-2",
 				Namespace: "default",
 				Labels: map[string]string{
-					"ignored": "value",
+					managedByLabelKey: managedByLabelValue,
+					"ignored":         "value",
 				},
 			},
 		},

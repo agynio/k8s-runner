@@ -56,6 +56,13 @@ func TestBuildLabelsRejectsInvalidExplicitLabel(t *testing.T) {
 	}
 }
 
+func TestBuildLabelsRejectsReservedLabel(t *testing.T) {
+	_, err := buildLabels("uuid-1", nil, map[string]string{managedByLabelKey: "override"})
+	if err == nil {
+		t.Fatalf("expected error for reserved label key")
+	}
+}
+
 func TestBuildDockerConfigJSON(t *testing.T) {
 	payload, err := buildDockerConfigJSON("registry.example.com", "user", "pass")
 	if err != nil {
@@ -536,6 +543,43 @@ func TestStartWorkloadAppliesLabelsToPodAndPVC(t *testing.T) {
 	}
 	if pvc.Labels[volumeKeyLabelKey] != "volume-key-1" {
 		t.Fatalf("expected volume key label %q, got %q", "volume-key-1", pvc.Labels[volumeKeyLabelKey])
+	}
+}
+
+func TestStartWorkloadRejectsReservedVolumeLabel(t *testing.T) {
+	clientset := fake.NewSimpleClientset()
+	server := New(Options{
+		Clientset:   clientset,
+		Namespace:   "default",
+		StorageSize: "1Gi",
+		Logger:      zap.NewNop(),
+	})
+
+	ctx := context.Background()
+	req := &runnerv1.StartWorkloadRequest{
+		Main: &runnerv1.ContainerSpec{Name: "main", Image: "busybox"},
+		Volumes: []*runnerv1.VolumeSpec{
+			{
+				Name:           "data",
+				Kind:           runnerv1.VolumeKind_VOLUME_KIND_NAMED,
+				PersistentName: "pvc-data",
+				Labels: map[string]string{
+					managedByLabelKey: "override",
+				},
+			},
+		},
+	}
+
+	_, err := server.StartWorkload(ctx, req)
+	if err == nil {
+		t.Fatalf("expected error for reserved volume label")
+	}
+	st, ok := status.FromError(err)
+	if !ok || st.Code() != codes.InvalidArgument {
+		t.Fatalf("expected invalid argument error, got %v", err)
+	}
+	if !strings.Contains(st.Message(), "invalid_volume_label") {
+		t.Fatalf("expected invalid volume label error, got %q", st.Message())
 	}
 }
 
