@@ -15,6 +15,8 @@ const (
 	managedByLabelKey      = "app.kubernetes.io/managed-by"
 	managedByLabelValue    = "k8s-runner"
 	workloadIDLabelKey     = "agyn.io/workload-id"
+	workloadKeyLabelKey    = "workload_key"
+	volumeKeyLabelKey      = "volume_key"
 	pvcAnnotationKey       = "agyn.io/pvc-names"
 	secretAnnotationKey    = "agyn.io/pull-secret-names"
 	touchedAtAnnotationKey = "agyn.io/touched-at"
