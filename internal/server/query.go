@@ -29,6 +29,28 @@ func (s *Server) GetWorkloadLabels(ctx context.Context, req *runnerv1.GetWorkloa
 	return &runnerv1.GetWorkloadLabelsResponse{Labels: pod.Labels}, nil
 }
 
+func (s *Server) ListWorkloads(ctx context.Context, _ *runnerv1.ListWorkloadsRequest) (*runnerv1.ListWorkloadsResponse, error) {
+	selector := labels.Set(map[string]string{managedByLabelKey: managedByLabelValue}).AsSelector().String()
+	list, err := s.clientset.CoreV1().Pods(s.namespace).List(ctx, metav1.ListOptions{LabelSelector: selector})
+	if err != nil {
+		return nil, grpcErrorFromKube(s.logger, err, codes.Internal)
+	}
+
+	workloads := make([]*runnerv1.WorkloadListItem, 0, len(list.Items))
+	for _, pod := range list.Items {
+		workloadKey, ok := pod.Labels[workloadKeyLabelKey]
+		if !ok {
+			continue
+		}
+		workloads = append(workloads, &runnerv1.WorkloadListItem{
+			InstanceId:  pod.Name,
+			WorkloadKey: workloadKey,
+		})
+	}
+
+	return &runnerv1.ListWorkloadsResponse{Workloads: workloads}, nil
+}
+
 func (s *Server) FindWorkloadsByLabels(ctx context.Context, req *runnerv1.FindWorkloadsByLabelsRequest) (*runnerv1.FindWorkloadsByLabelsResponse, error) {
 	selector := labels.Set(req.GetLabels()).AsSelector().String()
 	list, err := s.clientset.CoreV1().Pods(s.namespace).List(ctx, metav1.ListOptions{LabelSelector: selector})
@@ -67,6 +89,28 @@ func (s *Server) ListWorkloadsByVolume(ctx context.Context, req *runnerv1.ListWo
 	}
 
 	return &runnerv1.ListWorkloadsByVolumeResponse{TargetIds: ids}, nil
+}
+
+func (s *Server) ListVolumes(ctx context.Context, _ *runnerv1.ListVolumesRequest) (*runnerv1.ListVolumesResponse, error) {
+	selector := labels.Set(map[string]string{managedByLabelKey: managedByLabelValue}).AsSelector().String()
+	list, err := s.clientset.CoreV1().PersistentVolumeClaims(s.namespace).List(ctx, metav1.ListOptions{LabelSelector: selector})
+	if err != nil {
+		return nil, grpcErrorFromKube(s.logger, err, codes.Internal)
+	}
+
+	volumes := make([]*runnerv1.VolumeListItem, 0, len(list.Items))
+	for _, pvc := range list.Items {
+		volumeKey, ok := pvc.Labels[volumeKeyLabelKey]
+		if !ok {
+			continue
+		}
+		volumes = append(volumes, &runnerv1.VolumeListItem{
+			InstanceId: pvc.Name,
+			VolumeKey:  volumeKey,
+		})
+	}
+
+	return &runnerv1.ListVolumesResponse{Volumes: volumes}, nil
 }
 
 func podUsesPVC(pod *corev1.Pod, pvcName string) bool {

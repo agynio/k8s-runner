@@ -24,15 +24,16 @@ func TestBuildLabelsFiltersAndValidates(t *testing.T) {
 	labels, err := buildLabels("uuid-1", map[string]string{
 		"label.team": "core",
 		"ignored":    "value",
-	})
+	}, map[string]string{workloadKeyLabelKey: "workload-1"})
 	if err != nil {
 		t.Fatalf("buildLabels returned error: %v", err)
 	}
 
 	expected := map[string]string{
-		managedByLabelKey:  managedByLabelValue,
-		workloadIDLabelKey: "uuid-1",
-		"team":             "core",
+		managedByLabelKey:   managedByLabelValue,
+		workloadIDLabelKey:  "uuid-1",
+		workloadKeyLabelKey: "workload-1",
+		"team":              "core",
 	}
 	if !reflect.DeepEqual(labels, expected) {
 		t.Fatalf("labels mismatch: got %#v want %#v", labels, expected)
@@ -42,9 +43,23 @@ func TestBuildLabelsFiltersAndValidates(t *testing.T) {
 func TestBuildLabelsRejectsInvalidKey(t *testing.T) {
 	_, err := buildLabels("uuid-1", map[string]string{
 		"label.bad key": "value",
-	})
+	}, nil)
 	if err == nil {
 		t.Fatalf("expected error for invalid label key")
+	}
+}
+
+func TestBuildLabelsRejectsInvalidExplicitLabel(t *testing.T) {
+	_, err := buildLabels("uuid-1", nil, map[string]string{"bad key": "value"})
+	if err == nil {
+		t.Fatalf("expected error for invalid explicit label key")
+	}
+}
+
+func TestBuildLabelsRejectsReservedLabel(t *testing.T) {
+	_, err := buildLabels("uuid-1", nil, map[string]string{managedByLabelKey: "override"})
+	if err == nil {
+		t.Fatalf("expected error for reserved label key")
 	}
 }
 
@@ -462,6 +477,109 @@ func TestStartWorkloadCreatesImagePullSecrets(t *testing.T) {
 		if !reflect.DeepEqual(secret.Data[corev1.DockerConfigJsonKey], expectedConfig) {
 			t.Fatalf("expected docker config data to match")
 		}
+	}
+}
+
+func TestStartWorkloadAppliesLabelsToPodAndPVC(t *testing.T) {
+	clientset := fake.NewSimpleClientset()
+	server := New(Options{
+		Clientset:   clientset,
+		Namespace:   "default",
+		StorageSize: "1Gi",
+		Logger:      zap.NewNop(),
+	})
+
+	ctx := context.Background()
+	req := &runnerv1.StartWorkloadRequest{
+		Main: &runnerv1.ContainerSpec{Name: "main", Image: "busybox"},
+		Labels: map[string]string{
+			workloadKeyLabelKey: "workload-key-1",
+			"team":              "core",
+		},
+		Volumes: []*runnerv1.VolumeSpec{
+			{
+				Name:           "data",
+				Kind:           runnerv1.VolumeKind_VOLUME_KIND_NAMED,
+				PersistentName: "pvc-data",
+				Labels: map[string]string{
+					volumeKeyLabelKey: "volume-key-1",
+				},
+			},
+		},
+	}
+
+	resp, err := server.StartWorkload(ctx, req)
+	if err != nil {
+		t.Fatalf("StartWorkload returned error: %v", err)
+	}
+	if resp == nil || resp.Id == "" {
+		t.Fatalf("expected response with id")
+	}
+
+	podName := podNameFromID(resp.Id)
+	pod, err := clientset.CoreV1().Pods("default").Get(ctx, podName, metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("expected pod created: %v", err)
+	}
+	if pod.Labels[managedByLabelKey] != managedByLabelValue {
+		t.Fatalf("expected managed-by label %q, got %q", managedByLabelValue, pod.Labels[managedByLabelKey])
+	}
+	if pod.Labels[workloadIDLabelKey] != resp.Id {
+		t.Fatalf("expected workload id label %q, got %q", resp.Id, pod.Labels[workloadIDLabelKey])
+	}
+	if pod.Labels[workloadKeyLabelKey] != "workload-key-1" {
+		t.Fatalf("expected workload key label %q, got %q", "workload-key-1", pod.Labels[workloadKeyLabelKey])
+	}
+	if pod.Labels["team"] != "core" {
+		t.Fatalf("expected team label %q, got %q", "core", pod.Labels["team"])
+	}
+
+	pvc, err := clientset.CoreV1().PersistentVolumeClaims("default").Get(ctx, "pvc-data", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("expected pvc created: %v", err)
+	}
+	if pvc.Labels[managedByLabelKey] != managedByLabelValue {
+		t.Fatalf("expected pvc managed-by label %q, got %q", managedByLabelValue, pvc.Labels[managedByLabelKey])
+	}
+	if pvc.Labels[volumeKeyLabelKey] != "volume-key-1" {
+		t.Fatalf("expected volume key label %q, got %q", "volume-key-1", pvc.Labels[volumeKeyLabelKey])
+	}
+}
+
+func TestStartWorkloadRejectsReservedVolumeLabel(t *testing.T) {
+	clientset := fake.NewSimpleClientset()
+	server := New(Options{
+		Clientset:   clientset,
+		Namespace:   "default",
+		StorageSize: "1Gi",
+		Logger:      zap.NewNop(),
+	})
+
+	ctx := context.Background()
+	req := &runnerv1.StartWorkloadRequest{
+		Main: &runnerv1.ContainerSpec{Name: "main", Image: "busybox"},
+		Volumes: []*runnerv1.VolumeSpec{
+			{
+				Name:           "data",
+				Kind:           runnerv1.VolumeKind_VOLUME_KIND_NAMED,
+				PersistentName: "pvc-data",
+				Labels: map[string]string{
+					managedByLabelKey: "override",
+				},
+			},
+		},
+	}
+
+	_, err := server.StartWorkload(ctx, req)
+	if err == nil {
+		t.Fatalf("expected error for reserved volume label")
+	}
+	st, ok := status.FromError(err)
+	if !ok || st.Code() != codes.InvalidArgument {
+		t.Fatalf("expected invalid argument error, got %v", err)
+	}
+	if !strings.Contains(st.Message(), "invalid_volume_label") {
+		t.Fatalf("expected invalid volume label error, got %q", st.Message())
 	}
 }
 

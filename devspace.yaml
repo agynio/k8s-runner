@@ -36,7 +36,7 @@ functions:
        "value": "/opt/app/data"},
 
       {"op": "add", "path": "/spec/template/spec/containers/0/command",
-       "value": ["sh", "-c", "set -eu; elapsed=0; while [ ! -f /opt/app/data/go.mod ] || [ ! -f /opt/app/data/buf.gen.yaml ] || [ ! -f /opt/app/data/cmd/k8s-runner/main.go ]; do sleep 1; elapsed=$((elapsed + 1)); [ $elapsed -ge 120 ] && exit 1; done; echo Generating protobuf types...; buf generate --include-imports buf.build/agynio/api --path agynio/api/runner/v1 --path agynio/api/runners/v1 --path agynio/api/gateway/v1 --template ./buf.gen.yaml; echo Tidying Go modules...; go mod tidy; echo Starting k8s-runner...; go build -o /tmp/k8s-runner ./cmd/k8s-runner && exec /tmp/k8s-runner"]},
+       "value": ["sh", "-c", "set -eu; elapsed=0; while [ ! -f /opt/app/data/go.mod ] || [ ! -f /opt/app/data/buf.gen.yaml ] || [ ! -f /opt/app/data/cmd/k8s-runner/main.go ]; do sleep 1; elapsed=$((elapsed + 1)); [ $elapsed -ge 120 ] && exit 1; done; echo Generating protobuf types...; rm -rf /tmp/agynio-api; git clone https://github.com/agynio/api.git /tmp/agynio-api; git -C /tmp/agynio-api checkout ec008b1e2dfacec3e4d85776729fe1c3d5f2c42d; cd /tmp/agynio-api; buf generate --include-imports --path proto/agynio/api/runner/v1 --path proto/agynio/api/runners/v1 --path proto/agynio/api/gateway/v1 --template /opt/app/data/buf.gen.yaml -o /opt/app/data; cd /opt/app/data; echo Tidying Go modules...; go mod tidy; echo Starting k8s-runner...; go build -o /tmp/k8s-runner ./cmd/k8s-runner && exec /tmp/k8s-runner"]},
 
       {"op": "replace", "path": "/spec/template/spec/containers/0/env",
        "value": [
@@ -187,7 +187,7 @@ pipelines:
       exec_container \
         --label-selector "app.kubernetes.io/name=k8s-runner-e2e" \
         -n ${K8S_RUNNER_NAMESPACE} \
-        -- bash -c 'cd /opt/app/data && buf generate --include-imports buf.build/agynio/api --path agynio/api/runner/v1 --path agynio/api/runners/v1 --path agynio/api/gateway/v1 --template ./buf.gen.yaml && go mod tidy && go test -v -count=1 -tags e2e ./test/e2e/'
+        -- bash -c 'cd /opt/app/data && rm -rf /tmp/agynio-api && git clone https://github.com/agynio/api.git /tmp/agynio-api && git -C /tmp/agynio-api checkout ec008b1e2dfacec3e4d85776729fe1c3d5f2c42d && cd /tmp/agynio-api && buf generate --include-imports --path proto/agynio/api/runner/v1 --path proto/agynio/api/runners/v1 --path proto/agynio/api/gateway/v1 --template /opt/app/data/buf.gen.yaml -o /opt/app/data && cd /opt/app/data && go mod tidy && go test -v -count=1 -tags e2e ./test/e2e/'
       EXIT_CODE=$?
       purge_deployments e2e-runner
       exit $EXIT_CODE

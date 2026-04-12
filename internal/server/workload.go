@@ -43,7 +43,7 @@ func (s *Server) StartWorkload(ctx context.Context, req *runnerv1.StartWorkloadR
 	id := uuid.NewString()
 	podName := podNameFromID(id)
 
-	labels, err := buildLabels(id, req.AdditionalProperties)
+	labels, err := buildLabels(id, req.AdditionalProperties, req.Labels)
 	if err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "invalid_label: %v", err)
 	}
@@ -252,7 +252,7 @@ func (s *Server) TouchWorkload(ctx context.Context, req *runnerv1.TouchWorkloadR
 	return &runnerv1.TouchWorkloadResponse{}, nil
 }
 
-func buildLabels(workloadID string, additional map[string]string) (map[string]string, error) {
+func buildLabels(workloadID string, additional map[string]string, explicit map[string]string) (map[string]string, error) {
 	labels := map[string]string{
 		managedByLabelKey:  managedByLabelValue,
 		workloadIDLabelKey: workloadID,
@@ -266,16 +266,42 @@ func buildLabels(workloadID string, additional map[string]string) (map[string]st
 		if labelKey == "" {
 			return nil, fmt.Errorf("empty label key")
 		}
-		if errs := validation.IsQualifiedName(labelKey); len(errs) > 0 {
-			return nil, fmt.Errorf("invalid label key %q: %s", labelKey, strings.Join(errs, ", "))
+		if err := addLabel(labels, labelKey, value); err != nil {
+			return nil, err
 		}
-		if errs := validation.IsValidLabelValue(value); len(errs) > 0 {
-			return nil, fmt.Errorf("invalid label value for %q: %s", labelKey, strings.Join(errs, ", "))
-		}
-		labels[labelKey] = value
+	}
+
+	if err := addLabels(labels, explicit); err != nil {
+		return nil, err
 	}
 
 	return labels, nil
+}
+
+func addLabels(target map[string]string, source map[string]string) error {
+	for key, value := range source {
+		if err := addLabel(target, key, value); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func addLabel(target map[string]string, labelKey, value string) error {
+	if labelKey == "" {
+		return fmt.Errorf("empty label key")
+	}
+	if labelKey == managedByLabelKey || labelKey == workloadIDLabelKey {
+		return fmt.Errorf("reserved label key %q", labelKey)
+	}
+	if errs := validation.IsQualifiedName(labelKey); len(errs) > 0 {
+		return fmt.Errorf("invalid label key %q: %s", labelKey, strings.Join(errs, ", "))
+	}
+	if errs := validation.IsValidLabelValue(value); len(errs) > 0 {
+		return fmt.Errorf("invalid label value for %q: %s", labelKey, strings.Join(errs, ", "))
+	}
+	target[labelKey] = value
+	return nil
 }
 
 func buildDockerConfigJSON(registry, username, password string) ([]byte, error) {
@@ -484,6 +510,9 @@ func (s *Server) ensurePVC(ctx context.Context, volume *runnerv1.VolumeSpec, lab
 			continue
 		}
 		pvc.Labels[key] = value
+	}
+	if err := addLabels(pvc.Labels, volume.GetLabels()); err != nil {
+		return "", status.Errorf(codes.InvalidArgument, "invalid_volume_label: %v", err)
 	}
 
 	if _, err := s.clientset.CoreV1().PersistentVolumeClaims(s.namespace).Create(ctx, pvc, metav1.CreateOptions{}); err != nil {
