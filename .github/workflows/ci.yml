@@ -27,7 +27,9 @@ jobs:
           git -C /tmp/agynio-api checkout ec008b1e2dfacec3e4d85776729fe1c3d5f2c42d
 
       - name: Generate protobuf bindings
-        run: buf generate --include-imports --path proto/agynio/api/runner/v1 --path proto/agynio/api/runners/v1 --path proto/agynio/api/gateway/v1 --template ./buf.gen.yaml /tmp/agynio-api -o .
+        run: |
+          cd /tmp/agynio-api
+          buf generate --include-imports --path proto/agynio/api/runner/v1 --path proto/agynio/api/runners/v1 --path proto/agynio/api/gateway/v1 --template "${GITHUB_WORKSPACE}/buf.gen.yaml" -o "${GITHUB_WORKSPACE}"
 
       - name: Run tests
         run: go test ./...
