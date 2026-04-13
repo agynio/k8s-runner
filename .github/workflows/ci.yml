@@ -21,15 +21,8 @@ jobs:
       - name: Install buf
         uses: bufbuild/buf-setup-action@v1
 
-      - name: Checkout api protos
-        run: |
-          git clone https://github.com/agynio/api.git /tmp/agynio-api
-          git -C /tmp/agynio-api checkout 140bf067155332412ae7a15abe516acc6fa3d43b
-
       - name: Generate protobuf bindings
-        run: |
-          cd /tmp/agynio-api
-          buf generate --include-imports --path proto/agynio/api/runner/v1 --path proto/agynio/api/runners/v1 --path proto/agynio/api/gateway/v1 --template "${GITHUB_WORKSPACE}/buf.gen.yaml" -o "${GITHUB_WORKSPACE}"
+        run: buf generate --include-imports
 
       - name: Run tests
         run: go test ./...
