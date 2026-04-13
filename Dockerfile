@@ -13,19 +13,10 @@ RUN curl -sSL \
 FROM --platform=$BUILDPLATFORM golang:${GO_VERSION}-alpine AS build
 WORKDIR /src
 COPY --from=buf /usr/local/bin/buf /usr/local/bin/buf
-RUN apk add --no-cache git
 COPY go.mod go.sum ./
 RUN go mod download
 COPY buf.gen.yaml ./
-RUN git clone https://github.com/agynio/api.git /tmp/agynio-api && \
-    git -C /tmp/agynio-api checkout fda3ad21889b1333d517a39a82e000f1fa7ed997
-RUN cd /tmp/agynio-api && \
-    buf generate --include-imports \
-      --path proto/agynio/api/runner/v1 \
-      --path proto/agynio/api/runners/v1 \
-      --path proto/agynio/api/gateway/v1 \
-      --template /src/buf.gen.yaml \
-      -o /src
+RUN buf generate --include-imports --template buf.gen.yaml -o /src
 COPY . .
 ARG TARGETOS TARGETARCH
 ENV CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH

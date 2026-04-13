@@ -6,6 +6,13 @@ managed:
     - file_option: go_package_prefix
       value: github.com/agynio/k8s-runner/internal/.gen
 
+inputs:
+  - module: buf.build/agynio/api
+    paths:
+      - agynio/api/runner/v1
+      - agynio/api/runners/v1
+      - agynio/api/gateway/v1
+
 plugins:
   - remote: buf.build/protocolbuffers/go
     out: internal/.gen
