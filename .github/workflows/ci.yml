@@ -24,7 +24,7 @@ jobs:
       - name: Checkout api protos
         run: |
           git clone https://github.com/agynio/api.git /tmp/agynio-api
-          git -C /tmp/agynio-api checkout fda3ad21889b1333d517a39a82e000f1fa7ed997
+          git -C /tmp/agynio-api checkout 140bf067155332412ae7a15abe516acc6fa3d43b
 
       - name: Generate protobuf bindings
         run: |
