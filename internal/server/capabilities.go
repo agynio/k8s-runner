@@ -48,9 +48,6 @@ func resolveCapabilityPlan(req *runnerv1.StartWorkloadRequest, implementations c
 	for _, capability := range capabilities {
 		switch capability {
 		case dockerCapability:
-			if plan.dockerImplementation != "" {
-				continue
-			}
 			implementation := implementations.Docker
 			if implementation == "" {
 				return plan, status.Error(codes.InvalidArgument, "docker_capability_not_configured")
@@ -110,9 +107,6 @@ func normalizeCapabilities(capabilities []string) ([]string, error) {
 
 func collectContainerNames(req *runnerv1.StartWorkloadRequest) map[string]struct{} {
 	names := make(map[string]struct{})
-	if req == nil {
-		return names
-	}
 	addName := func(spec *runnerv1.ContainerSpec, fallback string) {
 		if spec == nil {
 			return

@@ -564,6 +564,94 @@ func TestStartWorkloadRejectsUnknownCapability(t *testing.T) {
 	}
 }
 
+func TestStartWorkloadRejectsDockerCapabilityNotConfigured(t *testing.T) {
+	clientset := fake.NewSimpleClientset()
+	server := New(Options{
+		Clientset:   clientset,
+		Namespace:   "default",
+		StorageSize: "1Gi",
+		Logger:      zap.NewNop(),
+	})
+
+	ctx := context.Background()
+	_, err := server.StartWorkload(ctx, &runnerv1.StartWorkloadRequest{
+		Main:         &runnerv1.ContainerSpec{Name: "main", Image: "busybox"},
+		Capabilities: []string{dockerCapability},
+	})
+	if err == nil {
+		t.Fatal("expected error for docker capability not configured")
+	}
+	st, ok := status.FromError(err)
+	if !ok || st.Code() != codes.InvalidArgument {
+		t.Fatalf("expected invalid argument error, got %v", err)
+	}
+	if !strings.Contains(st.Message(), "docker_capability_not_configured") {
+		t.Fatalf("expected docker capability not configured error, got %q", st.Message())
+	}
+}
+
+func TestStartWorkloadRejectsDockerContainerNameConflict(t *testing.T) {
+	clientset := fake.NewSimpleClientset()
+	server := New(Options{
+		Clientset:   clientset,
+		Namespace:   "default",
+		StorageSize: "1Gi",
+		Logger:      zap.NewNop(),
+		CapabilityImplementations: config.CapabilityImplementations{
+			Docker: config.DockerImplementationRootless,
+		},
+	})
+
+	ctx := context.Background()
+	_, err := server.StartWorkload(ctx, &runnerv1.StartWorkloadRequest{
+		Main:         &runnerv1.ContainerSpec{Name: "main", Image: "busybox"},
+		Sidecars:     []*runnerv1.ContainerSpec{{Name: dockerSidecarName, Image: "busybox"}},
+		Capabilities: []string{dockerCapability},
+	})
+	if err == nil {
+		t.Fatal("expected error for docker container name conflict")
+	}
+	st, ok := status.FromError(err)
+	if !ok || st.Code() != codes.InvalidArgument {
+		t.Fatalf("expected invalid argument error, got %v", err)
+	}
+	if !strings.Contains(st.Message(), "capability_container_name_conflict") {
+		t.Fatalf("expected container name conflict error, got %q", st.Message())
+	}
+}
+
+func TestStartWorkloadRejectsDockerVolumeNameConflict(t *testing.T) {
+	clientset := fake.NewSimpleClientset()
+	server := New(Options{
+		Clientset:   clientset,
+		Namespace:   "default",
+		StorageSize: "1Gi",
+		Logger:      zap.NewNop(),
+		CapabilityImplementations: config.CapabilityImplementations{
+			Docker: config.DockerImplementationRootless,
+		},
+	})
+
+	ctx := context.Background()
+	_, err := server.StartWorkload(ctx, &runnerv1.StartWorkloadRequest{
+		Main: &runnerv1.ContainerSpec{Name: "main", Image: "busybox"},
+		Volumes: []*runnerv1.VolumeSpec{
+			{Name: dockerDataVolumeName, Kind: runnerv1.VolumeKind_VOLUME_KIND_EPHEMERAL},
+		},
+		Capabilities: []string{dockerCapability},
+	})
+	if err == nil {
+		t.Fatal("expected error for docker volume name conflict")
+	}
+	st, ok := status.FromError(err)
+	if !ok || st.Code() != codes.InvalidArgument {
+		t.Fatalf("expected invalid argument error, got %v", err)
+	}
+	if !strings.Contains(st.Message(), "capability_volume_name_conflict") {
+		t.Fatalf("expected volume name conflict error, got %q", st.Message())
+	}
+}
+
 func TestStartWorkloadRejectsUnknownDockerImplementation(t *testing.T) {
 	clientset := fake.NewSimpleClientset()
 	server := New(Options{

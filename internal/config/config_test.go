@@ -2,6 +2,7 @@ package config
 
 import (
 	"os"
+	"strings"
 	"testing"
 )
 
@@ -66,6 +67,72 @@ func TestLoadGatewayAddressCustom(t *testing.T) {
 	}
 	if cfg.GatewayAddress != "gateway.internal:1234" {
 		t.Fatalf("expected gateway address %s, got %s", "gateway.internal:1234", cfg.GatewayAddress)
+	}
+}
+
+func TestParseCapabilityImplementations(t *testing.T) {
+	tests := []struct {
+		name        string
+		raw         string
+		expected    CapabilityImplementations
+		errContains string
+	}{
+		{
+			name:     "empty string",
+			raw:      "",
+			expected: CapabilityImplementations{},
+		},
+		{
+			name:     "empty map",
+			raw:      "{}",
+			expected: CapabilityImplementations{},
+		},
+		{
+			name:     "rootless",
+			raw:      `{"docker":"rootless"}`,
+			expected: CapabilityImplementations{Docker: DockerImplementationRootless},
+		},
+		{
+			name:     "privileged",
+			raw:      `{"docker":"privileged"}`,
+			expected: CapabilityImplementations{Docker: DockerImplementationPrivileged},
+		},
+		{
+			name:        "invalid docker",
+			raw:         `{"docker":"unsupported"}`,
+			errContains: "invalid docker capability implementation",
+		},
+		{
+			name:        "unknown key",
+			raw:         `{"buildah":"rootless"}`,
+			errContains: "unknown capability implementation",
+		},
+		{
+			name:        "malformed json",
+			raw:         "{invalid",
+			errContains: "invalid CAPABILITY_IMPLEMENTATIONS",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got, err := parseCapabilityImplementations(test.raw)
+			if test.errContains != "" {
+				if err == nil {
+					t.Fatalf("expected error containing %q", test.errContains)
+				}
+				if !strings.Contains(err.Error(), test.errContains) {
+					t.Fatalf("expected error containing %q, got %q", test.errContains, err.Error())
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("expected no error, got %v", err)
+			}
+			if got.Docker != test.expected.Docker {
+				t.Fatalf("expected docker implementation %q, got %q", test.expected.Docker, got.Docker)
+			}
+		})
 	}
 }
 
