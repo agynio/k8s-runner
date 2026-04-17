@@ -9,6 +9,7 @@ import (
 	"k8s.io/client-go/rest"
 
 	runnerv1 "github.com/agynio/k8s-runner/internal/.gen/agynio/api/runner/v1"
+	"github.com/agynio/k8s-runner/internal/config"
 )
 
 const (
@@ -25,12 +26,13 @@ const (
 // Server implements the RunnerService gRPC API against the Kubernetes API.
 type Server struct {
 	runnerv1.UnimplementedRunnerServiceServer
-	clientset    kubernetes.Interface
-	restConfig   *rest.Config
-	namespace    string
-	storageClass *string
-	storageSize  string
-	logger       *zap.Logger
+	clientset                 kubernetes.Interface
+	restConfig                *rest.Config
+	namespace                 string
+	storageClass              *string
+	storageSize               string
+	logger                    *zap.Logger
+	capabilityImplementations config.CapabilityImplementations
 
 	execSessions   map[string]*execSession
 	execSessionsMu sync.Mutex
@@ -38,24 +40,26 @@ type Server struct {
 
 // Options defines required inputs for constructing a Server.
 type Options struct {
-	Clientset    kubernetes.Interface
-	RestConfig   *rest.Config
-	Namespace    string
-	StorageClass *string
-	StorageSize  string
-	Logger       *zap.Logger
+	Clientset                 kubernetes.Interface
+	RestConfig                *rest.Config
+	Namespace                 string
+	StorageClass              *string
+	StorageSize               string
+	Logger                    *zap.Logger
+	CapabilityImplementations config.CapabilityImplementations
 }
 
 // New constructs a RunnerService server.
 func New(options Options) *Server {
 	return &Server{
-		clientset:    options.Clientset,
-		restConfig:   options.RestConfig,
-		namespace:    options.Namespace,
-		storageClass: options.StorageClass,
-		storageSize:  options.StorageSize,
-		logger:       options.Logger,
-		execSessions: make(map[string]*execSession),
+		clientset:                 options.Clientset,
+		restConfig:                options.RestConfig,
+		namespace:                 options.Namespace,
+		storageClass:              options.StorageClass,
+		storageSize:               options.StorageSize,
+		logger:                    options.Logger,
+		capabilityImplementations: options.CapabilityImplementations,
+		execSessions:              make(map[string]*execSession),
 	}
 }
 

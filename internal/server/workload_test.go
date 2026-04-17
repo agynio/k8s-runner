@@ -18,6 +18,7 @@ import (
 	"k8s.io/client-go/kubernetes/fake"
 
 	runnerv1 "github.com/agynio/k8s-runner/internal/.gen/agynio/api/runner/v1"
+	"github.com/agynio/k8s-runner/internal/config"
 )
 
 func TestBuildLabelsFiltersAndValidates(t *testing.T) {
@@ -422,6 +423,264 @@ func TestStartWorkloadBuildsInitContainers(t *testing.T) {
 	}
 }
 
+func TestStartWorkloadInjectsDockerRootless(t *testing.T) {
+	clientset := fake.NewSimpleClientset()
+	server := New(Options{
+		Clientset:   clientset,
+		Namespace:   "default",
+		StorageSize: "1Gi",
+		Logger:      zap.NewNop(),
+		CapabilityImplementations: config.CapabilityImplementations{
+			Docker: config.DockerImplementationRootless,
+		},
+	})
+
+	ctx := context.Background()
+	req := &runnerv1.StartWorkloadRequest{
+		Main:         &runnerv1.ContainerSpec{Name: "main", Image: "busybox"},
+		Capabilities: []string{dockerCapability},
+	}
+
+	resp, err := server.StartWorkload(ctx, req)
+	if err != nil {
+		t.Fatalf("StartWorkload returned error: %v", err)
+	}
+
+	podName := podNameFromID(resp.Id)
+	pod, err := clientset.CoreV1().Pods("default").Get(ctx, podName, metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("expected pod created: %v", err)
+	}
+
+	if pod.Spec.HostUsers == nil || *pod.Spec.HostUsers {
+		t.Fatalf("expected hostUsers false for rootless docker")
+	}
+
+	main := findContainer(pod.Spec.Containers, "main")
+	if main == nil {
+		t.Fatal("expected main container")
+	}
+	assertEnvValue(t, main.Env, dockerHostEnvName, dockerHostEnvValue)
+
+	sidecar := findContainer(pod.Spec.Containers, dockerSidecarName)
+	if sidecar == nil {
+		t.Fatal("expected docker sidecar container")
+	}
+	if sidecar.Image != dockerRootlessImage {
+		t.Fatalf("expected rootless docker image %q, got %q", dockerRootlessImage, sidecar.Image)
+	}
+	assertEnvValue(t, sidecar.Env, dockerTLSCertDirEnvName, dockerTLSCertDirDisabledValue)
+	assertVolumeMount(t, sidecar.VolumeMounts, dockerDataVolumeName, dockerRootlessDataMountPath)
+	assertVolumeMount(t, sidecar.VolumeMounts, dockerRunVolumeName, dockerRootlessRunMountPath)
+	assertEmptyDirVolume(t, pod.Spec.Volumes, dockerDataVolumeName)
+	assertEmptyDirVolume(t, pod.Spec.Volumes, dockerRunVolumeName)
+	assertSidecarInstance(t, resp.GetContainers().GetSidecars(), dockerSidecarName)
+}
+
+func TestStartWorkloadInjectsDockerPrivileged(t *testing.T) {
+	clientset := fake.NewSimpleClientset()
+	server := New(Options{
+		Clientset:   clientset,
+		Namespace:   "default",
+		StorageSize: "1Gi",
+		Logger:      zap.NewNop(),
+		CapabilityImplementations: config.CapabilityImplementations{
+			Docker: config.DockerImplementationPrivileged,
+		},
+	})
+
+	ctx := context.Background()
+	req := &runnerv1.StartWorkloadRequest{
+		Main:         &runnerv1.ContainerSpec{Name: "main", Image: "busybox"},
+		Capabilities: []string{dockerCapability},
+	}
+
+	resp, err := server.StartWorkload(ctx, req)
+	if err != nil {
+		t.Fatalf("StartWorkload returned error: %v", err)
+	}
+
+	podName := podNameFromID(resp.Id)
+	pod, err := clientset.CoreV1().Pods("default").Get(ctx, podName, metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("expected pod created: %v", err)
+	}
+
+	if pod.Spec.HostUsers != nil {
+		t.Fatalf("expected hostUsers to remain unset for privileged docker")
+	}
+
+	main := findContainer(pod.Spec.Containers, "main")
+	if main == nil {
+		t.Fatal("expected main container")
+	}
+	assertEnvValue(t, main.Env, dockerHostEnvName, dockerHostEnvValue)
+
+	sidecar := findContainer(pod.Spec.Containers, dockerSidecarName)
+	if sidecar == nil {
+		t.Fatal("expected docker sidecar container")
+	}
+	if sidecar.Image != dockerPrivilegedImage {
+		t.Fatalf("expected privileged docker image %q, got %q", dockerPrivilegedImage, sidecar.Image)
+	}
+	if sidecar.SecurityContext == nil || sidecar.SecurityContext.Privileged == nil || !*sidecar.SecurityContext.Privileged {
+		t.Fatalf("expected docker sidecar to be privileged")
+	}
+	if sidecar.SecurityContext.AllowPrivilegeEscalation == nil || !*sidecar.SecurityContext.AllowPrivilegeEscalation {
+		t.Fatalf("expected docker sidecar to allow privilege escalation")
+	}
+	assertEnvValue(t, sidecar.Env, dockerTLSCertDirEnvName, dockerTLSCertDirDisabledValue)
+	assertVolumeMount(t, sidecar.VolumeMounts, dockerDataVolumeName, dockerPrivilegedDataMountPath)
+	assertEmptyDirVolume(t, pod.Spec.Volumes, dockerDataVolumeName)
+	if findVolume(pod.Spec.Volumes, dockerRunVolumeName) != nil {
+		t.Fatalf("expected no docker run volume for privileged docker")
+	}
+	assertSidecarInstance(t, resp.GetContainers().GetSidecars(), dockerSidecarName)
+}
+
+func TestStartWorkloadRejectsUnknownCapability(t *testing.T) {
+	clientset := fake.NewSimpleClientset()
+	server := New(Options{
+		Clientset:   clientset,
+		Namespace:   "default",
+		StorageSize: "1Gi",
+		Logger:      zap.NewNop(),
+	})
+
+	ctx := context.Background()
+	_, err := server.StartWorkload(ctx, &runnerv1.StartWorkloadRequest{
+		Main:         &runnerv1.ContainerSpec{Name: "main", Image: "busybox"},
+		Capabilities: []string{"unknown"},
+	})
+	if err == nil {
+		t.Fatal("expected error for unknown capability")
+	}
+	st, ok := status.FromError(err)
+	if !ok || st.Code() != codes.InvalidArgument {
+		t.Fatalf("expected invalid argument error, got %v", err)
+	}
+	if !strings.Contains(st.Message(), "unknown_capability") {
+		t.Fatalf("expected unknown capability error, got %q", st.Message())
+	}
+}
+
+func TestStartWorkloadRejectsDockerCapabilityNotConfigured(t *testing.T) {
+	clientset := fake.NewSimpleClientset()
+	server := New(Options{
+		Clientset:   clientset,
+		Namespace:   "default",
+		StorageSize: "1Gi",
+		Logger:      zap.NewNop(),
+	})
+
+	ctx := context.Background()
+	_, err := server.StartWorkload(ctx, &runnerv1.StartWorkloadRequest{
+		Main:         &runnerv1.ContainerSpec{Name: "main", Image: "busybox"},
+		Capabilities: []string{dockerCapability},
+	})
+	if err == nil {
+		t.Fatal("expected error for docker capability not configured")
+	}
+	st, ok := status.FromError(err)
+	if !ok || st.Code() != codes.InvalidArgument {
+		t.Fatalf("expected invalid argument error, got %v", err)
+	}
+	if !strings.Contains(st.Message(), "docker_capability_not_configured") {
+		t.Fatalf("expected docker capability not configured error, got %q", st.Message())
+	}
+}
+
+func TestStartWorkloadRejectsDockerContainerNameConflict(t *testing.T) {
+	clientset := fake.NewSimpleClientset()
+	server := New(Options{
+		Clientset:   clientset,
+		Namespace:   "default",
+		StorageSize: "1Gi",
+		Logger:      zap.NewNop(),
+		CapabilityImplementations: config.CapabilityImplementations{
+			Docker: config.DockerImplementationRootless,
+		},
+	})
+
+	ctx := context.Background()
+	_, err := server.StartWorkload(ctx, &runnerv1.StartWorkloadRequest{
+		Main:         &runnerv1.ContainerSpec{Name: "main", Image: "busybox"},
+		Sidecars:     []*runnerv1.ContainerSpec{{Name: dockerSidecarName, Image: "busybox"}},
+		Capabilities: []string{dockerCapability},
+	})
+	if err == nil {
+		t.Fatal("expected error for docker container name conflict")
+	}
+	st, ok := status.FromError(err)
+	if !ok || st.Code() != codes.InvalidArgument {
+		t.Fatalf("expected invalid argument error, got %v", err)
+	}
+	if !strings.Contains(st.Message(), "capability_container_name_conflict") {
+		t.Fatalf("expected container name conflict error, got %q", st.Message())
+	}
+}
+
+func TestStartWorkloadRejectsDockerVolumeNameConflict(t *testing.T) {
+	clientset := fake.NewSimpleClientset()
+	server := New(Options{
+		Clientset:   clientset,
+		Namespace:   "default",
+		StorageSize: "1Gi",
+		Logger:      zap.NewNop(),
+		CapabilityImplementations: config.CapabilityImplementations{
+			Docker: config.DockerImplementationRootless,
+		},
+	})
+
+	ctx := context.Background()
+	_, err := server.StartWorkload(ctx, &runnerv1.StartWorkloadRequest{
+		Main: &runnerv1.ContainerSpec{Name: "main", Image: "busybox"},
+		Volumes: []*runnerv1.VolumeSpec{
+			{Name: dockerDataVolumeName, Kind: runnerv1.VolumeKind_VOLUME_KIND_EPHEMERAL},
+		},
+		Capabilities: []string{dockerCapability},
+	})
+	if err == nil {
+		t.Fatal("expected error for docker volume name conflict")
+	}
+	st, ok := status.FromError(err)
+	if !ok || st.Code() != codes.InvalidArgument {
+		t.Fatalf("expected invalid argument error, got %v", err)
+	}
+	if !strings.Contains(st.Message(), "capability_volume_name_conflict") {
+		t.Fatalf("expected volume name conflict error, got %q", st.Message())
+	}
+}
+
+func TestStartWorkloadRejectsUnknownDockerImplementation(t *testing.T) {
+	clientset := fake.NewSimpleClientset()
+	server := New(Options{
+		Clientset:   clientset,
+		Namespace:   "default",
+		StorageSize: "1Gi",
+		Logger:      zap.NewNop(),
+		CapabilityImplementations: config.CapabilityImplementations{
+			Docker: config.DockerImplementation("unsupported"),
+		},
+	})
+
+	ctx := context.Background()
+	_, err := server.StartWorkload(ctx, &runnerv1.StartWorkloadRequest{
+		Main:         &runnerv1.ContainerSpec{Name: "main", Image: "busybox"},
+		Capabilities: []string{dockerCapability},
+	})
+	if err == nil {
+		t.Fatal("expected error for unknown docker implementation")
+	}
+	st, ok := status.FromError(err)
+	if !ok || st.Code() != codes.InvalidArgument {
+		t.Fatalf("expected invalid argument error, got %v", err)
+	}
+	if !strings.Contains(st.Message(), "unknown_docker_implementation") {
+		t.Fatalf("expected unknown docker implementation error, got %q", st.Message())
+	}
+}
+
 func TestStartWorkloadMapsDnsConfig(t *testing.T) {
 	clientset := fake.NewSimpleClientset()
 	server := New(Options{
@@ -805,4 +1064,71 @@ func TestParseSecretAnnotation(t *testing.T) {
 	if !reflect.DeepEqual(got, expected) {
 		t.Fatalf("expected secret list %#v, got %#v", expected, got)
 	}
+}
+
+func findContainer(containers []corev1.Container, name string) *corev1.Container {
+	for idx := range containers {
+		if containers[idx].Name == name {
+			return &containers[idx]
+		}
+	}
+	return nil
+}
+
+func findVolume(volumes []corev1.Volume, name string) *corev1.Volume {
+	for idx := range volumes {
+		if volumes[idx].Name == name {
+			return &volumes[idx]
+		}
+	}
+	return nil
+}
+
+func assertEnvValue(t *testing.T, envs []corev1.EnvVar, name, expected string) {
+	t.Helper()
+	for _, env := range envs {
+		if env.Name != name {
+			continue
+		}
+		if env.Value != expected {
+			t.Fatalf("expected env %s=%q, got %q", name, expected, env.Value)
+		}
+		return
+	}
+	t.Fatalf("expected env %s to be set", name)
+}
+
+func assertVolumeMount(t *testing.T, mounts []corev1.VolumeMount, name, mountPath string) {
+	t.Helper()
+	for _, mount := range mounts {
+		if mount.Name != name {
+			continue
+		}
+		if mount.MountPath != mountPath {
+			t.Fatalf("expected mount %s at %q, got %q", name, mountPath, mount.MountPath)
+		}
+		return
+	}
+	t.Fatalf("expected mount %s", name)
+}
+
+func assertEmptyDirVolume(t *testing.T, volumes []corev1.Volume, name string) {
+	t.Helper()
+	volume := findVolume(volumes, name)
+	if volume == nil {
+		t.Fatalf("expected volume %s", name)
+	}
+	if volume.EmptyDir == nil {
+		t.Fatalf("expected %s to be emptyDir volume", name)
+	}
+}
+
+func assertSidecarInstance(t *testing.T, sidecars []*runnerv1.SidecarInstance, name string) {
+	t.Helper()
+	for _, sidecar := range sidecars {
+		if sidecar.GetName() == name {
+			return
+		}
+	}
+	t.Fatalf("expected sidecar instance %s", name)
 }
