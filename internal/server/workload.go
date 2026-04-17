@@ -53,6 +53,11 @@ func (s *Server) StartWorkload(ctx context.Context, req *runnerv1.StartWorkloadR
 		return nil, status.Errorf(codes.InvalidArgument, "invalid_label: %v", err)
 	}
 
+	capabilityPlan, err := resolveCapabilityPlan(req, s.capabilityImplementations)
+	if err != nil {
+		return nil, err
+	}
+
 	imagePullSecrets, secretNames, err := s.buildImagePullSecrets(ctx, workloadID, req.ImagePullCredentials)
 	if err != nil {
 		return nil, err
@@ -67,6 +72,7 @@ func (s *Server) StartWorkload(ctx context.Context, req *runnerv1.StartWorkloadR
 	if err != nil {
 		return nil, err
 	}
+	hostUsers := capabilityPlan.apply(&containers, &volumes, &sidecarNames)
 
 	annotations := map[string]string{}
 	if len(pvcNames) > 0 {
@@ -89,6 +95,9 @@ func (s *Server) StartWorkload(ctx context.Context, req *runnerv1.StartWorkloadR
 			Containers:     containers,
 			Volumes:        volumes,
 		},
+	}
+	if hostUsers != nil {
+		pod.Spec.HostUsers = hostUsers
 	}
 
 	if len(imagePullSecrets) > 0 {

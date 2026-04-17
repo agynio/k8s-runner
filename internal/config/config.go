@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"strconv"
@@ -20,15 +21,27 @@ const (
 
 // Config captures runtime configuration derived from the environment.
 type Config struct {
-	GRPCAddr              string
-	Namespace             string
-	ZitiEnabled           bool
-	ServiceToken          string
-	GatewayAddress        string
-	ZitiEnrollmentTimeout time.Duration
-	StorageClass          *string
-	StorageSize           string
-	LogLevel              string
+	GRPCAddr                  string
+	Namespace                 string
+	ZitiEnabled               bool
+	ServiceToken              string
+	GatewayAddress            string
+	ZitiEnrollmentTimeout     time.Duration
+	StorageClass              *string
+	StorageSize               string
+	LogLevel                  string
+	CapabilityImplementations CapabilityImplementations
+}
+
+type DockerImplementation string
+
+const (
+	DockerImplementationRootless   DockerImplementation = "rootless"
+	DockerImplementationPrivileged DockerImplementation = "privileged"
+)
+
+type CapabilityImplementations struct {
+	Docker DockerImplementation
 }
 
 // Load reads configuration from environment variables, applying defaults when
@@ -80,6 +93,15 @@ func Load() (Config, error) {
 	}
 
 	cfg.LogLevel = normalizeLogLevel(readEnv("LOG_LEVEL", defaultLogLevel))
+
+	capabilityConfig := strings.TrimSpace(os.Getenv("CAPABILITY_IMPLEMENTATIONS"))
+	if capabilityConfig != "" {
+		implementations, err := parseCapabilityImplementations(capabilityConfig)
+		if err != nil {
+			return Config{}, err
+		}
+		cfg.CapabilityImplementations = implementations
+	}
 
 	return cfg, nil
 }
@@ -136,4 +158,39 @@ func normalizeLogLevel(level string) string {
 	default:
 		return "info"
 	}
+}
+
+func parseCapabilityImplementations(raw string) (CapabilityImplementations, error) {
+	if raw == "" {
+		return CapabilityImplementations{}, nil
+	}
+	var parsed map[string]string
+	if err := json.Unmarshal([]byte(raw), &parsed); err != nil {
+		return CapabilityImplementations{}, fmt.Errorf("invalid CAPABILITY_IMPLEMENTATIONS: %w", err)
+	}
+	if len(parsed) == 0 {
+		return CapabilityImplementations{}, nil
+	}
+	var implementations CapabilityImplementations
+	for key, value := range parsed {
+		capability := strings.TrimSpace(key)
+		if capability == "" {
+			return CapabilityImplementations{}, fmt.Errorf("invalid CAPABILITY_IMPLEMENTATIONS key")
+		}
+		implementation := strings.ToLower(strings.TrimSpace(value))
+		switch capability {
+		case "docker":
+			switch DockerImplementation(implementation) {
+			case DockerImplementationRootless:
+				implementations.Docker = DockerImplementationRootless
+			case DockerImplementationPrivileged:
+				implementations.Docker = DockerImplementationPrivileged
+			default:
+				return CapabilityImplementations{}, fmt.Errorf("invalid docker capability implementation %q", value)
+			}
+		default:
+			return CapabilityImplementations{}, fmt.Errorf("unknown capability implementation %q", capability)
+		}
+	}
+	return implementations, nil
 }

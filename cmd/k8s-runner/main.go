@@ -64,12 +64,13 @@ func run() error {
 	runnerv1.RegisterRunnerServiceServer(
 		grpcServer,
 		server.New(server.Options{
-			Clientset:    kubeClient.Clientset,
-			RestConfig:   kubeClient.RestConfig,
-			Namespace:    cfg.Namespace,
-			StorageClass: cfg.StorageClass,
-			StorageSize:  cfg.StorageSize,
-			Logger:       logger,
+			Clientset:                 kubeClient.Clientset,
+			RestConfig:                kubeClient.RestConfig,
+			Namespace:                 cfg.Namespace,
+			StorageClass:              cfg.StorageClass,
+			StorageSize:               cfg.StorageSize,
+			Logger:                    logger,
+			CapabilityImplementations: cfg.CapabilityImplementations,
 		}),
 	)
 
