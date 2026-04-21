@@ -452,8 +452,8 @@ func TestStartWorkloadInjectsDockerRootless(t *testing.T) {
 		t.Fatalf("expected pod created: %v", err)
 	}
 
-	if pod.Spec.HostUsers == nil || *pod.Spec.HostUsers {
-		t.Fatalf("expected hostUsers false for rootless docker")
+	if pod.Spec.HostUsers != nil {
+		t.Fatalf("expected hostUsers to remain unset for rootless docker")
 	}
 
 	main := findContainer(pod.Spec.Containers, "main")
