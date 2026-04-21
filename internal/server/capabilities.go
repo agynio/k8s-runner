@@ -17,7 +17,7 @@ const (
 	dockerSidecarName             = "docker-daemon"
 	dockerDataVolumeName          = "docker-data"
 	dockerRunVolumeName           = "docker-run"
-	dockerRootlessImage           = "docker:27-rootless"
+	dockerRootlessImage           = "docker:27-dind-rootless"
 	dockerPrivilegedImage         = "docker:27-dind"
 	dockerTLSCertDirEnvName       = "DOCKER_TLS_CERTDIR"
 	dockerTLSCertDirDisabledValue = ""
