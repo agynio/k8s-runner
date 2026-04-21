@@ -78,10 +78,6 @@ func (plan capabilityPlan) apply(containers *[]corev1.Container, volumes *[]core
 	*containers = append(*containers, dockerSidecarContainer(plan.dockerImplementation))
 	*sidecarNames = append(*sidecarNames, dockerSidecarName)
 	*volumes = append(*volumes, dockerVolumes(plan.dockerImplementation)...)
-
-	if plan.dockerImplementation == config.DockerImplementationRootless {
-		return boolPtr(false)
-	}
 	return nil
 }
 
@@ -229,8 +225,4 @@ func upsertEnvVar(envs []corev1.EnvVar, name, value string) []corev1.EnvVar {
 		result = append(result, env)
 	}
 	return append(result, corev1.EnvVar{Name: name, Value: value})
-}
-
-func boolPtr(value bool) *bool {
-	return &value
 }
