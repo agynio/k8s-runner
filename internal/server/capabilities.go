@@ -24,7 +24,7 @@ const (
 	dockerTLSCertDirDisabledValue = ""
 	dockerHostEnvName             = "DOCKER_HOST"
 	dockerHostEnvValue            = "tcp://localhost:2375"
-	dockerRootlessDataMountPath   = "/home/rootless/.local/share/docker"
+	dockerRootlessDataMountPath   = "/home/rootless/.local/share"
 	dockerRootlessRunMountPath    = "/run/user/1000"
 	dockerTunDevicePath           = "/dev/net/tun"
 	dockerPrivilegedDataMountPath = "/var/lib/docker"
