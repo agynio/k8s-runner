@@ -182,6 +182,9 @@ func dockerSidecarContainer(implementation config.DockerImplementation) corev1.C
 				{Name: dockerRunVolumeName, MountPath: dockerRootlessRunMountPath},
 				{Name: dockerTunVolumeName, MountPath: dockerTunDevicePath},
 			},
+			// Rootless dockerd launches a nested runc; default RuntimeDefault
+			// seccomp/AppArmor profiles block mount-related syscalls (notably
+			// mounting proc), so unconfined is required for docker run to work.
 			SecurityContext: &corev1.SecurityContext{
 				AllowPrivilegeEscalation: &allowPrivilegeEscalation,
 				SeccompProfile:           seccompProfile,
