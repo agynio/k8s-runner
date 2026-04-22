@@ -170,6 +170,9 @@ func dockerSidecarContainer(implementation config.DockerImplementation) corev1.C
 	env := []corev1.EnvVar{{Name: dockerTLSCertDirEnvName, Value: dockerTLSCertDirDisabledValue}}
 	switch implementation {
 	case config.DockerImplementationRootless:
+		allowPrivilegeEscalation := true
+		seccompProfile := &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeUnconfined}
+		appArmorProfile := &corev1.AppArmorProfile{Type: corev1.AppArmorProfileTypeUnconfined}
 		return corev1.Container{
 			Name:  dockerSidecarName,
 			Image: dockerRootlessImage,
@@ -178,6 +181,11 @@ func dockerSidecarContainer(implementation config.DockerImplementation) corev1.C
 				{Name: dockerDataVolumeName, MountPath: dockerRootlessDataMountPath},
 				{Name: dockerRunVolumeName, MountPath: dockerRootlessRunMountPath},
 				{Name: dockerTunVolumeName, MountPath: dockerTunDevicePath},
+			},
+			SecurityContext: &corev1.SecurityContext{
+				AllowPrivilegeEscalation: &allowPrivilegeEscalation,
+				SeccompProfile:           seccompProfile,
+				AppArmorProfile:          appArmorProfile,
 			},
 		}
 	case config.DockerImplementationPrivileged:
