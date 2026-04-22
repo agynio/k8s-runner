@@ -469,8 +469,20 @@ func TestStartWorkloadInjectsDockerRootless(t *testing.T) {
 	if sidecar.Image != dockerRootlessImage {
 		t.Fatalf("expected rootless docker image %q, got %q", dockerRootlessImage, sidecar.Image)
 	}
+	if sidecar.SecurityContext == nil {
+		t.Fatal("expected docker sidecar security context")
+	}
+	if sidecar.SecurityContext.AllowPrivilegeEscalation == nil || !*sidecar.SecurityContext.AllowPrivilegeEscalation {
+		t.Fatalf("expected allowPrivilegeEscalation true for rootless docker")
+	}
+	if sidecar.SecurityContext.SeccompProfile == nil || sidecar.SecurityContext.SeccompProfile.Type != corev1.SeccompProfileTypeUnconfined {
+		t.Fatalf("expected seccomp profile unconfined for rootless docker")
+	}
+	if sidecar.SecurityContext.AppArmorProfile == nil || sidecar.SecurityContext.AppArmorProfile.Type != corev1.AppArmorProfileTypeUnconfined {
+		t.Fatalf("expected appArmor profile unconfined for rootless docker")
+	}
 	assertEnvValue(t, sidecar.Env, dockerTLSCertDirEnvName, dockerTLSCertDirDisabledValue)
-	assertVolumeMount(t, sidecar.VolumeMounts, dockerDataVolumeName, "/home/rootless/.local/share")
+	assertVolumeMount(t, sidecar.VolumeMounts, dockerDataVolumeName, dockerRootlessDataMountPath)
 	assertVolumeMount(t, sidecar.VolumeMounts, dockerRunVolumeName, dockerRootlessRunMountPath)
 	assertVolumeMount(t, sidecar.VolumeMounts, dockerTunVolumeName, dockerTunDevicePath)
 	assertEmptyDirVolume(t, pod.Spec.Volumes, dockerDataVolumeName)
