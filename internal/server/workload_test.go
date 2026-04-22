@@ -472,8 +472,10 @@ func TestStartWorkloadInjectsDockerRootless(t *testing.T) {
 	assertEnvValue(t, sidecar.Env, dockerTLSCertDirEnvName, dockerTLSCertDirDisabledValue)
 	assertVolumeMount(t, sidecar.VolumeMounts, dockerDataVolumeName, dockerRootlessDataMountPath)
 	assertVolumeMount(t, sidecar.VolumeMounts, dockerRunVolumeName, dockerRootlessRunMountPath)
+	assertVolumeMount(t, sidecar.VolumeMounts, dockerTunVolumeName, dockerTunDevicePath)
 	assertEmptyDirVolume(t, pod.Spec.Volumes, dockerDataVolumeName)
 	assertEmptyDirVolume(t, pod.Spec.Volumes, dockerRunVolumeName)
+	assertHostPathVolume(t, pod.Spec.Volumes, dockerTunVolumeName, dockerTunDevicePath, corev1.HostPathCharDev)
 	assertSidecarInstance(t, resp.GetContainers().GetSidecars(), dockerSidecarName)
 }
 
@@ -534,6 +536,9 @@ func TestStartWorkloadInjectsDockerPrivileged(t *testing.T) {
 	assertEmptyDirVolume(t, pod.Spec.Volumes, dockerDataVolumeName)
 	if findVolume(pod.Spec.Volumes, dockerRunVolumeName) != nil {
 		t.Fatalf("expected no docker run volume for privileged docker")
+	}
+	if findVolume(pod.Spec.Volumes, dockerTunVolumeName) != nil {
+		t.Fatalf("expected no docker tun volume for privileged docker")
 	}
 	assertSidecarInstance(t, resp.GetContainers().GetSidecars(), dockerSidecarName)
 }
@@ -642,6 +647,38 @@ func TestStartWorkloadRejectsDockerVolumeNameConflict(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("expected error for docker volume name conflict")
+	}
+	st, ok := status.FromError(err)
+	if !ok || st.Code() != codes.InvalidArgument {
+		t.Fatalf("expected invalid argument error, got %v", err)
+	}
+	if !strings.Contains(st.Message(), "capability_volume_name_conflict") {
+		t.Fatalf("expected volume name conflict error, got %q", st.Message())
+	}
+}
+
+func TestStartWorkloadRejectsDockerTunVolumeNameConflict(t *testing.T) {
+	clientset := fake.NewSimpleClientset()
+	server := New(Options{
+		Clientset:   clientset,
+		Namespace:   "default",
+		StorageSize: "1Gi",
+		Logger:      zap.NewNop(),
+		CapabilityImplementations: config.CapabilityImplementations{
+			Docker: config.DockerImplementationRootless,
+		},
+	})
+
+	ctx := context.Background()
+	_, err := server.StartWorkload(ctx, &runnerv1.StartWorkloadRequest{
+		Main: &runnerv1.ContainerSpec{Name: "main", Image: "busybox"},
+		Volumes: []*runnerv1.VolumeSpec{
+			{Name: dockerTunVolumeName, Kind: runnerv1.VolumeKind_VOLUME_KIND_EPHEMERAL},
+		},
+		Capabilities: []string{dockerCapability},
+	})
+	if err == nil {
+		t.Fatal("expected error for docker tun volume name conflict")
 	}
 	st, ok := status.FromError(err)
 	if !ok || st.Code() != codes.InvalidArgument {
@@ -1120,6 +1157,26 @@ func assertEmptyDirVolume(t *testing.T, volumes []corev1.Volume, name string) {
 	}
 	if volume.EmptyDir == nil {
 		t.Fatalf("expected %s to be emptyDir volume", name)
+	}
+}
+
+func assertHostPathVolume(t *testing.T, volumes []corev1.Volume, name, path string, hostPathType corev1.HostPathType) {
+	t.Helper()
+	volume := findVolume(volumes, name)
+	if volume == nil {
+		t.Fatalf("expected volume %s", name)
+	}
+	if volume.HostPath == nil {
+		t.Fatalf("expected %s to be hostPath volume", name)
+	}
+	if volume.HostPath.Path != path {
+		t.Fatalf("expected %s hostPath %q, got %q", name, path, volume.HostPath.Path)
+	}
+	if volume.HostPath.Type == nil {
+		t.Fatalf("expected %s hostPath type", name)
+	}
+	if *volume.HostPath.Type != hostPathType {
+		t.Fatalf("expected %s hostPath type %q, got %q", name, hostPathType, *volume.HostPath.Type)
 	}
 }
 

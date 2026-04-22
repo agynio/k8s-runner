@@ -17,6 +17,7 @@ const (
 	dockerSidecarName             = "docker-daemon"
 	dockerDataVolumeName          = "docker-data"
 	dockerRunVolumeName           = "docker-run"
+	dockerTunVolumeName           = "docker-tun"
 	dockerRootlessImage           = "docker:27-dind-rootless"
 	dockerPrivilegedImage         = "docker:27-dind"
 	dockerTLSCertDirEnvName       = "DOCKER_TLS_CERTDIR"
@@ -25,6 +26,7 @@ const (
 	dockerHostEnvValue            = "tcp://localhost:2375"
 	dockerRootlessDataMountPath   = "/home/rootless/.local/share/docker"
 	dockerRootlessRunMountPath    = "/run/user/1000"
+	dockerTunDevicePath           = "/dev/net/tun"
 	dockerPrivilegedDataMountPath = "/var/lib/docker"
 )
 
@@ -157,6 +159,9 @@ func validateDockerInjection(containerNames, volumeNames map[string]struct{}, im
 		if _, exists := volumeNames[dockerRunVolumeName]; exists {
 			return status.Errorf(codes.InvalidArgument, "capability_volume_name_conflict: %s", dockerRunVolumeName)
 		}
+		if _, exists := volumeNames[dockerTunVolumeName]; exists {
+			return status.Errorf(codes.InvalidArgument, "capability_volume_name_conflict: %s", dockerTunVolumeName)
+		}
 	}
 	return nil
 }
@@ -172,6 +177,7 @@ func dockerSidecarContainer(implementation config.DockerImplementation) corev1.C
 			VolumeMounts: []corev1.VolumeMount{
 				{Name: dockerDataVolumeName, MountPath: dockerRootlessDataMountPath},
 				{Name: dockerRunVolumeName, MountPath: dockerRootlessRunMountPath},
+				{Name: dockerTunVolumeName, MountPath: dockerTunDevicePath},
 			},
 		}
 	case config.DockerImplementationPrivileged:
@@ -208,7 +214,17 @@ func dockerVolumes(implementation config.DockerImplementation) []corev1.Volume {
 				EmptyDir: &corev1.EmptyDirVolumeSource{},
 			},
 		}
-		return []corev1.Volume{dataVolume, runVolume}
+		hostPathType := corev1.HostPathCharDev
+		tunVolume := corev1.Volume{
+			Name: dockerTunVolumeName,
+			VolumeSource: corev1.VolumeSource{
+				HostPath: &corev1.HostPathVolumeSource{
+					Path: dockerTunDevicePath,
+					Type: &hostPathType,
+				},
+			},
+		}
+		return []corev1.Volume{dataVolume, runVolume, tunVolume}
 	case config.DockerImplementationPrivileged:
 		return []corev1.Volume{dataVolume}
 	default:
