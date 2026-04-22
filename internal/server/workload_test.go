@@ -470,7 +470,7 @@ func TestStartWorkloadInjectsDockerRootless(t *testing.T) {
 		t.Fatalf("expected rootless docker image %q, got %q", dockerRootlessImage, sidecar.Image)
 	}
 	assertEnvValue(t, sidecar.Env, dockerTLSCertDirEnvName, dockerTLSCertDirDisabledValue)
-	assertVolumeMount(t, sidecar.VolumeMounts, dockerDataVolumeName, dockerRootlessDataMountPath)
+	assertVolumeMount(t, sidecar.VolumeMounts, dockerDataVolumeName, "/home/rootless/.local/share")
 	assertVolumeMount(t, sidecar.VolumeMounts, dockerRunVolumeName, dockerRootlessRunMountPath)
 	assertVolumeMount(t, sidecar.VolumeMounts, dockerTunVolumeName, dockerTunDevicePath)
 	assertEmptyDirVolume(t, pod.Spec.Volumes, dockerDataVolumeName)
