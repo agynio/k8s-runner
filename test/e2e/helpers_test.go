@@ -6,7 +6,9 @@ import (
 	"archive/tar"
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"strings"
 	"testing"
 	"time"
@@ -197,15 +199,19 @@ func collectExecOutput(t *testing.T, ctx context.Context, start *runnerv1.ExecSt
 func collectWorkloadLogs(t *testing.T, ctx context.Context, workloadID string, follow bool, tail uint32) string {
 	t.Helper()
 	stream, err := runnerClient.StreamWorkloadLogs(ctx, &runnerv1.StreamWorkloadLogsRequest{
-		WorkloadId: workloadID,
-		Follow:     follow,
-		Tail:       tail,
+		WorkloadId:    workloadID,
+		ContainerName: "main",
+		Follow:        follow,
+		TailLines:     tail,
 	})
 	require.NoError(t, err)
 
 	var output bytes.Buffer
 	for {
 		resp, err := stream.Recv()
+		if errors.Is(err, io.EOF) {
+			return output.String()
+		}
 		require.NoError(t, err)
 
 		if chunk := resp.GetChunk(); chunk != nil {

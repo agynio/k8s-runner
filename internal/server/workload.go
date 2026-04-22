@@ -12,6 +12,7 @@ import (
 	"go.uber.org/zap"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/types/known/timestamppb"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -236,6 +237,7 @@ func (s *Server) InspectWorkload(ctx context.Context, req *runnerv1.InspectWorkl
 
 	stateStatus := strings.ToLower(string(pod.Status.Phase))
 	stateRunning := pod.Status.Phase == corev1.PodRunning
+	containers := workloadContainersForPod(pod)
 
 	return &runnerv1.InspectWorkloadResponse{
 		Id:           workloadID,
@@ -246,7 +248,119 @@ func (s *Server) InspectWorkload(ctx context.Context, req *runnerv1.InspectWorkl
 		Mounts:       mountsForPod(pod, mainContainer.Name),
 		StateStatus:  stateStatus,
 		StateRunning: stateRunning,
+		Containers:   containers,
 	}, nil
+}
+
+func workloadContainersForPod(pod *corev1.Pod) []*runnerv1.WorkloadContainer {
+	if pod == nil {
+		return nil
+	}
+
+	initStatuses := containerStatusLookup(pod.Status.InitContainerStatuses)
+	containerStatuses := containerStatusLookup(pod.Status.ContainerStatuses)
+	containers := make([]*runnerv1.WorkloadContainer, 0, len(pod.Spec.InitContainers)+len(pod.Spec.Containers))
+
+	for _, container := range pod.Spec.InitContainers {
+		containers = append(containers, workloadContainerFromSpec(container, containerStatusForName(initStatuses, container.Name), runnerv1.ContainerRole_CONTAINER_ROLE_INIT))
+	}
+
+	if len(pod.Spec.Containers) == 0 {
+		return containers
+	}
+
+	main := pod.Spec.Containers[0]
+	containers = append(containers, workloadContainerFromSpec(main, containerStatusForName(containerStatuses, main.Name), runnerv1.ContainerRole_CONTAINER_ROLE_MAIN))
+	for _, sidecar := range pod.Spec.Containers[1:] {
+		containers = append(containers, workloadContainerFromSpec(sidecar, containerStatusForName(containerStatuses, sidecar.Name), runnerv1.ContainerRole_CONTAINER_ROLE_SIDECAR))
+	}
+
+	return containers
+}
+
+func containerStatusLookup(statuses []corev1.ContainerStatus) map[string]corev1.ContainerStatus {
+	lookup := make(map[string]corev1.ContainerStatus, len(statuses))
+	for _, status := range statuses {
+		lookup[status.Name] = status
+	}
+	return lookup
+}
+
+func containerStatusForName(lookup map[string]corev1.ContainerStatus, name string) *corev1.ContainerStatus {
+	status, ok := lookup[name]
+	if !ok {
+		return nil
+	}
+	return &status
+}
+
+func workloadContainerFromSpec(spec corev1.Container, status *corev1.ContainerStatus, role runnerv1.ContainerRole) *runnerv1.WorkloadContainer {
+	image := spec.Image
+	containerID := ""
+	restartCount := int32(0)
+	containerStatus := runnerv1.ContainerStatus_CONTAINER_STATUS_UNSPECIFIED
+	var reason *string
+	var message *string
+	var exitCode *int32
+	var startedAt *timestamppb.Timestamp
+	var finishedAt *timestamppb.Timestamp
+
+	if status != nil {
+		if status.Image != "" {
+			image = status.Image
+		}
+		containerID = status.ContainerID
+		restartCount = status.RestartCount
+		containerStatus, reason, message, exitCode, startedAt, finishedAt = containerState(status.State)
+	}
+
+	return &runnerv1.WorkloadContainer{
+		ContainerId:  containerID,
+		Name:         spec.Name,
+		Role:         role,
+		Image:        image,
+		Status:       containerStatus,
+		Reason:       reason,
+		Message:      message,
+		ExitCode:     exitCode,
+		RestartCount: restartCount,
+		StartedAt:    startedAt,
+		FinishedAt:   finishedAt,
+	}
+}
+
+func containerState(state corev1.ContainerState) (runnerv1.ContainerStatus, *string, *string, *int32, *timestamppb.Timestamp, *timestamppb.Timestamp) {
+	if state.Running != nil {
+		return runnerv1.ContainerStatus_CONTAINER_STATUS_RUNNING, nil, nil, nil, timestampOrNil(state.Running.StartedAt), nil
+	}
+	if state.Waiting != nil {
+		reason := optionalString(state.Waiting.Reason)
+		message := optionalString(state.Waiting.Message)
+		return runnerv1.ContainerStatus_CONTAINER_STATUS_WAITING, reason, message, nil, nil, nil
+	}
+	if state.Terminated != nil {
+		reason := optionalString(state.Terminated.Reason)
+		message := optionalString(state.Terminated.Message)
+		exitCode := int32(state.Terminated.ExitCode)
+		return runnerv1.ContainerStatus_CONTAINER_STATUS_TERMINATED, reason, message, &exitCode, timestampOrNil(state.Terminated.StartedAt), timestampOrNil(state.Terminated.FinishedAt)
+	}
+
+	return runnerv1.ContainerStatus_CONTAINER_STATUS_UNSPECIFIED, nil, nil, nil, nil, nil
+}
+
+func optionalString(value string) *string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil
+	}
+	return &value
+}
+
+func timestampOrNil(timestamp metav1.Time) *timestamppb.Timestamp {
+	if timestamp.IsZero() {
+		return nil
+	}
+	return timestamppb.New(timestamp.Time)
 }
 
 func (s *Server) TouchWorkload(ctx context.Context, req *runnerv1.TouchWorkloadRequest) (*runnerv1.TouchWorkloadResponse, error) {

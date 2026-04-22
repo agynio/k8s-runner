@@ -30,6 +30,14 @@ func TestErrors(t *testing.T) {
 		requireGRPCCode(t, err, codes.NotFound)
 	})
 
+	t.Run("stream_logs_missing_container_name", func(t *testing.T) {
+		ctx, cancel := testContext(t)
+		t.Cleanup(cancel)
+
+		_, err := runnerClient.StreamWorkloadLogs(ctx, &runnerv1.StreamWorkloadLogsRequest{WorkloadId: "missing-workload"})
+		requireGRPCCode(t, err, codes.InvalidArgument)
+	})
+
 	t.Run("exec_on_nonexistent_workload", func(t *testing.T) {
 		ctx, cancel := testContext(t)
 		t.Cleanup(cancel)
