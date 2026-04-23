@@ -1,7 +1,9 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -12,8 +14,10 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/watch"
+	"k8s.io/client-go/kubernetes"
 
 	runnerv1 "github.com/agynio/k8s-runner/internal/.gen/agynio/api/runner/v1"
 )
@@ -23,23 +27,43 @@ func (s *Server) StreamWorkloadLogs(req *runnerv1.StreamWorkloadLogsRequest, str
 	if workloadID == "" {
 		return status.Error(codes.InvalidArgument, "workload_id_required")
 	}
+	containerName := strings.TrimSpace(req.GetContainerName())
+	if containerName == "" {
+		return status.Error(codes.InvalidArgument, "container_name_required")
+	}
 
 	podName := podNameFromID(workloadID)
+	ctx := stream.Context()
+
+	pod, err := s.clientset.CoreV1().Pods(s.namespace).Get(ctx, podName, metav1.GetOptions{})
+	if err != nil {
+		return grpcErrorFromKube(s.logger, err, codes.Internal)
+	}
+	if !podHasContainer(pod, containerName) {
+		return status.Error(codes.NotFound, "container_not_found")
+	}
 
 	options := &corev1.PodLogOptions{
+		Container:  containerName,
 		Follow:     req.GetFollow(),
 		Timestamps: req.GetTimestamps(),
 	}
-	if req.GetTail() > 0 {
+	if req.GetTailLines() > 0 {
+		tail := int64(req.GetTailLines())
+		options.TailLines = &tail
+	} else if req.GetTail() > 0 {
 		tail := int64(req.GetTail())
 		options.TailLines = &tail
 	}
-	if req.GetSince() > 0 {
+	if req.GetSinceTime() != nil {
+		sinceTime := metav1.NewTime(req.GetSinceTime().AsTime())
+		options.SinceTime = &sinceTime
+	} else if req.GetSince() > 0 {
 		sinceTime := metav1.NewTime(time.Unix(req.GetSince(), 0))
 		options.SinceTime = &sinceTime
 	}
 
-	logStream, err := s.clientset.CoreV1().Pods(s.namespace).GetLogs(podName, options).Stream(stream.Context())
+	logStream, err := s.clientset.CoreV1().Pods(s.namespace).GetLogs(podName, options).Stream(ctx)
 	if err != nil {
 		return grpcErrorFromKube(s.logger, err, codes.Internal)
 	}
@@ -64,16 +88,53 @@ func (s *Server) StreamWorkloadLogs(req *runnerv1.StreamWorkloadLogsRequest, str
 			}
 		}
 		if readErr != nil {
-			if readErr == io.EOF {
-				return stream.Send(&runnerv1.StreamWorkloadLogsResponse{
-					Event: &runnerv1.StreamWorkloadLogsResponse_End{End: &runnerv1.LogEnd{}},
-				})
+			if ctx.Err() != nil {
+				return nil
 			}
-			return stream.Send(&runnerv1.StreamWorkloadLogsResponse{
-				Event: &runnerv1.StreamWorkloadLogsResponse_Error{Error: streamError("logs_stream_error", readErr)},
-			})
+			podAlive, err := podExists(ctx, s.clientset, s.namespace, podName)
+			if err != nil {
+				return grpcErrorFromKube(s.logger, err, codes.Internal)
+			}
+			return logReadError(readErr, podAlive)
 		}
 	}
+}
+
+func podExists(ctx context.Context, clientset kubernetes.Interface, namespace, name string) (bool, error) {
+	if _, err := clientset.CoreV1().Pods(namespace).Get(ctx, name, metav1.GetOptions{}); err != nil {
+		if apierrors.IsNotFound(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	return true, nil
+}
+
+func podHasContainer(pod *corev1.Pod, name string) bool {
+	if pod == nil {
+		return false
+	}
+	for _, container := range pod.Spec.InitContainers {
+		if container.Name == name {
+			return true
+		}
+	}
+	for _, container := range pod.Spec.Containers {
+		if container.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
+func logReadError(readErr error, podAlive bool) error {
+	if !podAlive {
+		return status.Error(codes.Unavailable, "pod_deleted")
+	}
+	if errors.Is(readErr, io.EOF) {
+		return nil
+	}
+	return status.Error(codes.Internal, "logs_stream_error")
 }
 
 func (s *Server) StreamEvents(req *runnerv1.StreamEventsRequest, stream runnerv1.RunnerService_StreamEventsServer) error {

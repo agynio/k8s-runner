@@ -8,6 +8,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"go.uber.org/zap"
 	"google.golang.org/grpc/codes"
@@ -1115,6 +1116,130 @@ func TestParseSecretAnnotation(t *testing.T) {
 	expected := []string{"secret-a", "secret-b"}
 	if !reflect.DeepEqual(got, expected) {
 		t.Fatalf("expected secret list %#v, got %#v", expected, got)
+	}
+}
+
+func TestWorkloadContainersForPodOrdersAndMaps(t *testing.T) {
+	initReason := "ImagePullBackOff"
+	initMessage := "pull failed"
+	mainStarted := metav1.NewTime(time.Date(2026, time.April, 24, 10, 0, 0, 0, time.UTC))
+	sidecarStarted := metav1.NewTime(time.Date(2026, time.April, 24, 10, 5, 0, 0, time.UTC))
+	sidecarFinished := metav1.NewTime(time.Date(2026, time.April, 24, 10, 6, 0, 0, time.UTC))
+
+	pod := &corev1.Pod{
+		Spec: corev1.PodSpec{
+			InitContainers: []corev1.Container{{Name: "init-setup", Image: "init-image"}},
+			Containers:     []corev1.Container{{Name: "main", Image: "main-image"}, {Name: "sidecar", Image: "sidecar-image"}},
+		},
+		Status: corev1.PodStatus{
+			InitContainerStatuses: []corev1.ContainerStatus{{
+				Name:         "init-setup",
+				Image:        "init-image@sha",
+				ContainerID:  "containerd://init",
+				RestartCount: 1,
+				State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{
+					Reason:  initReason,
+					Message: initMessage,
+				}},
+			}},
+			ContainerStatuses: []corev1.ContainerStatus{{
+				Name:        "main",
+				Image:       "main-image@sha",
+				ContainerID: "containerd://main",
+				State: corev1.ContainerState{Running: &corev1.ContainerStateRunning{
+					StartedAt: mainStarted,
+				}},
+			}, {
+				Name:         "sidecar",
+				Image:        "sidecar-image@sha",
+				ContainerID:  "containerd://sidecar",
+				RestartCount: 2,
+				State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{
+					Reason:     "Error",
+					Message:    "boom",
+					ExitCode:   137,
+					StartedAt:  sidecarStarted,
+					FinishedAt: sidecarFinished,
+				}},
+			}},
+		},
+	}
+
+	containers := workloadContainersForPod(pod)
+	if len(containers) != 3 {
+		t.Fatalf("expected 3 containers, got %d", len(containers))
+	}
+
+	initContainer := containers[0]
+	if initContainer.GetName() != "init-setup" {
+		t.Fatalf("expected init container name, got %q", initContainer.GetName())
+	}
+	if initContainer.GetRole() != runnerv1.ContainerRole_CONTAINER_ROLE_INIT {
+		t.Fatalf("expected init role, got %v", initContainer.GetRole())
+	}
+	if initContainer.GetStatus() != runnerv1.ContainerStatus_CONTAINER_STATUS_WAITING {
+		t.Fatalf("expected init status waiting, got %v", initContainer.GetStatus())
+	}
+	if initContainer.Reason == nil || *initContainer.Reason != initReason {
+		t.Fatalf("expected init reason %q, got %#v", initReason, initContainer.Reason)
+	}
+	if initContainer.Message == nil || *initContainer.Message != initMessage {
+		t.Fatalf("expected init message %q, got %#v", initMessage, initContainer.Message)
+	}
+	if initContainer.ExitCode != nil {
+		t.Fatalf("expected init exit code to be nil")
+	}
+	if initContainer.StartedAt != nil || initContainer.FinishedAt != nil {
+		t.Fatalf("expected init timestamps to be nil")
+	}
+	if initContainer.GetRestartCount() != 1 {
+		t.Fatalf("expected init restart count 1, got %d", initContainer.GetRestartCount())
+	}
+	if initContainer.GetImage() != "init-image@sha" {
+		t.Fatalf("expected init image from status, got %q", initContainer.GetImage())
+	}
+
+	mainContainer := containers[1]
+	if mainContainer.GetName() != "main" {
+		t.Fatalf("expected main container name, got %q", mainContainer.GetName())
+	}
+	if mainContainer.GetRole() != runnerv1.ContainerRole_CONTAINER_ROLE_MAIN {
+		t.Fatalf("expected main role, got %v", mainContainer.GetRole())
+	}
+	if mainContainer.GetStatus() != runnerv1.ContainerStatus_CONTAINER_STATUS_RUNNING {
+		t.Fatalf("expected main status running, got %v", mainContainer.GetStatus())
+	}
+	if mainContainer.Reason != nil || mainContainer.Message != nil {
+		t.Fatalf("expected main reason/message to be nil")
+	}
+	if mainContainer.StartedAt == nil {
+		t.Fatalf("expected main started_at to be set")
+	}
+	if !mainContainer.StartedAt.AsTime().Equal(mainStarted.Time) {
+		t.Fatalf("expected main started_at %v, got %v", mainStarted.Time, mainContainer.StartedAt.AsTime())
+	}
+	if mainContainer.GetImage() != "main-image@sha" {
+		t.Fatalf("expected main image from status, got %q", mainContainer.GetImage())
+	}
+
+	sidecarContainer := containers[2]
+	if sidecarContainer.GetName() != "sidecar" {
+		t.Fatalf("expected sidecar container name, got %q", sidecarContainer.GetName())
+	}
+	if sidecarContainer.GetRole() != runnerv1.ContainerRole_CONTAINER_ROLE_SIDECAR {
+		t.Fatalf("expected sidecar role, got %v", sidecarContainer.GetRole())
+	}
+	if sidecarContainer.GetStatus() != runnerv1.ContainerStatus_CONTAINER_STATUS_TERMINATED {
+		t.Fatalf("expected sidecar status terminated, got %v", sidecarContainer.GetStatus())
+	}
+	if sidecarContainer.ExitCode == nil || *sidecarContainer.ExitCode != 137 {
+		t.Fatalf("expected sidecar exit code 137, got %#v", sidecarContainer.ExitCode)
+	}
+	if sidecarContainer.FinishedAt == nil {
+		t.Fatalf("expected sidecar finished_at to be set")
+	}
+	if !sidecarContainer.FinishedAt.AsTime().Equal(sidecarFinished.Time) {
+		t.Fatalf("expected sidecar finished_at %v, got %v", sidecarFinished.Time, sidecarContainer.FinishedAt.AsTime())
 	}
 }
 
