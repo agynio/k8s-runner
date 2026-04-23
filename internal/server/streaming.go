@@ -88,9 +88,6 @@ func (s *Server) StreamWorkloadLogs(req *runnerv1.StreamWorkloadLogsRequest, str
 			}
 		}
 		if readErr != nil {
-			if errors.Is(readErr, io.EOF) {
-				return nil
-			}
 			if ctx.Err() != nil {
 				return nil
 			}
@@ -98,10 +95,7 @@ func (s *Server) StreamWorkloadLogs(req *runnerv1.StreamWorkloadLogsRequest, str
 			if err != nil {
 				return grpcErrorFromKube(s.logger, err, codes.Internal)
 			}
-			if !podAlive {
-				return status.Error(codes.Unavailable, "pod_deleted")
-			}
-			return status.Error(codes.Internal, "logs_stream_error")
+			return logReadError(readErr, podAlive)
 		}
 	}
 }
@@ -131,6 +125,16 @@ func podHasContainer(pod *corev1.Pod, name string) bool {
 		}
 	}
 	return false
+}
+
+func logReadError(readErr error, podAlive bool) error {
+	if !podAlive {
+		return status.Error(codes.Unavailable, "pod_deleted")
+	}
+	if errors.Is(readErr, io.EOF) {
+		return nil
+	}
+	return status.Error(codes.Internal, "logs_stream_error")
 }
 
 func (s *Server) StreamEvents(req *runnerv1.StreamEventsRequest, stream runnerv1.RunnerService_StreamEventsServer) error {
