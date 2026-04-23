@@ -34,7 +34,10 @@ func TestErrors(t *testing.T) {
 		ctx, cancel := testContext(t)
 		t.Cleanup(cancel)
 
-		_, err := runnerClient.StreamWorkloadLogs(ctx, &runnerv1.StreamWorkloadLogsRequest{WorkloadId: "missing-workload"})
+		stream, err := runnerClient.StreamWorkloadLogs(ctx, &runnerv1.StreamWorkloadLogsRequest{WorkloadId: "missing-workload"})
+		require.NoError(t, err)
+
+		_, err = stream.Recv()
 		requireGRPCCode(t, err, codes.InvalidArgument)
 	})
 
