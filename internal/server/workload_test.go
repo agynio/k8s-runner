@@ -455,6 +455,9 @@ func TestStartWorkloadInjectsDockerRootless(t *testing.T) {
 	if pod.Spec.HostUsers != nil {
 		t.Fatalf("expected hostUsers to remain unset for rootless docker")
 	}
+	assertAnnotation(t, pod.Annotations, dockerAppArmorLegacyAnnotationKey, dockerSecurityProfileUnconfined)
+	assertAnnotation(t, pod.Annotations, dockerSeccompPodAnnotationKey, dockerSecurityProfileUnconfined)
+	assertAnnotation(t, pod.Annotations, dockerSeccompContainerAnnotationKey, dockerSecurityProfileUnconfined)
 
 	main := findContainer(pod.Spec.Containers, "main")
 	if main == nil {
@@ -1133,6 +1136,17 @@ func assertEnvValue(t *testing.T, envs []corev1.EnvVar, name, expected string) {
 		return
 	}
 	t.Fatalf("expected env %s to be set", name)
+}
+
+func assertAnnotation(t *testing.T, annotations map[string]string, key, expected string) {
+	t.Helper()
+	value, ok := annotations[key]
+	if !ok {
+		t.Fatalf("expected annotation %s", key)
+	}
+	if value != expected {
+		t.Fatalf("expected annotation %s=%q, got %q", key, expected, value)
+	}
 }
 
 func assertVolumeMount(t *testing.T, mounts []corev1.VolumeMount, name, mountPath string) {

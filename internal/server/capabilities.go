@@ -28,6 +28,10 @@ const (
 	dockerRootlessRunMountPath    = "/run/user/1000"
 	dockerTunDevicePath           = "/dev/net/tun"
 	dockerPrivilegedDataMountPath = "/var/lib/docker"
+	dockerAppArmorLegacyAnnotationKey = "container.apparmor.security.beta.kubernetes.io/" + dockerSidecarName
+	dockerSeccompPodAnnotationKey     = "seccomp.security.alpha.kubernetes.io/pod"
+	dockerSeccompContainerAnnotationKey = "container.seccomp.security.alpha.kubernetes.io/" + dockerSidecarName
+	dockerSecurityProfileUnconfined     = "unconfined"
 )
 
 type capabilityPlan struct {
