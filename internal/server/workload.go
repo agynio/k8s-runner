@@ -74,7 +74,7 @@ func (s *Server) StartWorkload(ctx context.Context, req *runnerv1.StartWorkloadR
 	if err != nil {
 		return nil, err
 	}
-	hostUsers := capabilityPlan.apply(&containers, &volumes, &sidecarNames)
+	hostUsers := capabilityPlan.apply(&containers, &initContainers, &volumes, &sidecarNames)
 
 	annotations := map[string]string{}
 	if len(pvcNames) > 0 {
