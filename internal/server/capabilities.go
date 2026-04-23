@@ -177,6 +177,7 @@ func dockerSidecarContainer(implementation config.DockerImplementation) corev1.C
 		allowPrivilegeEscalation := true
 		seccompProfile := &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeUnconfined}
 		appArmorProfile := &corev1.AppArmorProfile{Type: corev1.AppArmorProfileTypeUnconfined}
+		procMount := corev1.UnmaskedProcMount
 		return corev1.Container{
 			Name:  dockerSidecarName,
 			Image: dockerRootlessImage,
@@ -193,6 +194,7 @@ func dockerSidecarContainer(implementation config.DockerImplementation) corev1.C
 				AllowPrivilegeEscalation: &allowPrivilegeEscalation,
 				SeccompProfile:           seccompProfile,
 				AppArmorProfile:          appArmorProfile,
+				ProcMount:                &procMount,
 			},
 		}
 	case config.DockerImplementationPrivileged:

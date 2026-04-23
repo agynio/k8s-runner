@@ -485,6 +485,9 @@ func TestStartWorkloadInjectsDockerRootless(t *testing.T) {
 	if sidecar.SecurityContext.AppArmorProfile == nil || sidecar.SecurityContext.AppArmorProfile.Type != corev1.AppArmorProfileTypeUnconfined {
 		t.Fatalf("expected appArmor profile unconfined for rootless docker")
 	}
+	if sidecar.SecurityContext.ProcMount == nil || *sidecar.SecurityContext.ProcMount != corev1.UnmaskedProcMount {
+		t.Fatalf("expected procMount unmasked for rootless docker")
+	}
 	assertEnvValue(t, sidecar.Env, dockerTLSCertDirEnvName, dockerTLSCertDirDisabledValue)
 	assertVolumeMount(t, sidecar.VolumeMounts, dockerDataVolumeName, dockerRootlessDataMountPath)
 	assertVolumeMount(t, sidecar.VolumeMounts, dockerRunVolumeName, dockerRootlessRunMountPath)

@@ -47,6 +47,8 @@ permissions and mounts to allow `docker run` to work:
 - `seccompProfile: Unconfined` and `appArmorProfile: Unconfined` because
   default RuntimeDefault/AppArmor profiles block mount-related syscalls
   (for example mounting `/proc`) required by nested `runc`.
+- `procMount: Unmasked` to avoid `/proc` mount masking interfering with
+  nested `runc` container setup.
 - HostPath mount for `/dev/net/tun` (type `CharDevice`).
 - `docker-data` emptyDir mounted at `/home/rootless/.local/share` so dockerd
   can create its own `docker/` data root with correct ownership.
