@@ -18,8 +18,11 @@ const (
 	dockerDataVolumeName          = "docker-data"
 	dockerRunVolumeName           = "docker-run"
 	dockerTunVolumeName           = "docker-tun"
+	dockerSubidVolumeName         = "docker-subid"
 	dockerRootlessImage           = "docker:27-dind-rootless"
 	dockerPrivilegedImage         = "docker:27-dind"
+	dockerSubidInitContainerName  = "docker-subid-init"
+	dockerSubidMountPath          = "/subid"
 	dockerTLSCertDirEnvName       = "DOCKER_TLS_CERTDIR"
 	dockerTLSCertDirDisabledValue = ""
 	dockerHostEnvName             = "DOCKER_HOST"
@@ -28,8 +31,48 @@ const (
 	dockerRootlessRunMountPath    = "/run/user/1000"
 	dockerTunDevicePath           = "/dev/net/tun"
 	dockerPrivilegedDataMountPath = "/var/lib/docker"
-	dockerAppArmorLegacyAnnotationKey = "container.apparmor.security.beta.kubernetes.io/" + dockerSidecarName
-	dockerSeccompPodAnnotationKey     = "seccomp.security.alpha.kubernetes.io/pod"
+	dockerSubuidMountPath         = "/etc/subuid"
+	dockerSubgidMountPath         = "/etc/subgid"
+	dockerSubuidFileName          = "subuid"
+	dockerSubgidFileName          = "subgid"
+	dockerSubidInitScript         = `set -eu
+
+write_subid() {
+  file="$1"
+  length="$2"
+  : > "$file"
+  if [ "$length" -le 1 ]; then
+    return
+  fi
+  max=$((length - 1))
+  if [ "$max" -le 0 ]; then
+    return
+  fi
+  if [ "$max" -lt 999 ]; then
+    first_end=$max
+  else
+    first_end=999
+  fi
+  if [ "$first_end" -ge 1 ]; then
+    echo "rootless:1:$first_end" >> "$file"
+  fi
+  if [ "$max" -ge 1001 ]; then
+    second_start=1001
+    second_count=$((max - second_start + 1))
+    if [ "$second_count" -gt 0 ]; then
+      echo "rootless:$second_start:$second_count" >> "$file"
+    fi
+  fi
+}
+
+uid_length=$(awk 'NR==1 {print $3}' /proc/self/uid_map)
+gid_length=$(awk 'NR==1 {print $3}' /proc/self/gid_map)
+
+write_subid "/subid/subuid" "$uid_length"
+write_subid "/subid/subgid" "$gid_length"
+`
+	dockerAppArmorLegacyAnnotationKey   = "container.apparmor.security.beta.kubernetes.io/" + dockerSidecarName
+	dockerSeccompPodAnnotationKey       = "seccomp.security.alpha.kubernetes.io/pod"
 	dockerSeccompContainerAnnotationKey = "container.seccomp.security.alpha.kubernetes.io/" + dockerSidecarName
 	dockerSecurityProfileUnconfined     = "unconfined"
 )
@@ -72,7 +115,7 @@ func resolveCapabilityPlan(req *runnerv1.StartWorkloadRequest, implementations c
 	return plan, nil
 }
 
-func (plan capabilityPlan) apply(containers *[]corev1.Container, volumes *[]corev1.Volume, sidecarNames *[]string) *bool {
+func (plan capabilityPlan) apply(containers *[]corev1.Container, initContainers *[]corev1.Container, volumes *[]corev1.Volume, sidecarNames *[]string) *bool {
 	if plan.dockerImplementation == "" {
 		return nil
 	}
@@ -84,6 +127,11 @@ func (plan capabilityPlan) apply(containers *[]corev1.Container, volumes *[]core
 	*containers = append(*containers, dockerSidecarContainer(plan.dockerImplementation))
 	*sidecarNames = append(*sidecarNames, dockerSidecarName)
 	*volumes = append(*volumes, dockerVolumes(plan.dockerImplementation)...)
+	if plan.dockerImplementation == config.DockerImplementationRootless {
+		*initContainers = append([]corev1.Container{dockerSubidInitContainer()}, *initContainers...)
+		hostUsers := false
+		return &hostUsers
+	}
 	return nil
 }
 
@@ -156,6 +204,11 @@ func validateDockerInjection(containerNames, volumeNames map[string]struct{}, im
 	if _, exists := containerNames[dockerSidecarName]; exists {
 		return status.Errorf(codes.InvalidArgument, "capability_container_name_conflict: %s", dockerSidecarName)
 	}
+	if implementation == config.DockerImplementationRootless {
+		if _, exists := containerNames[dockerSubidInitContainerName]; exists {
+			return status.Errorf(codes.InvalidArgument, "capability_container_name_conflict: %s", dockerSubidInitContainerName)
+		}
+	}
 	if _, exists := volumeNames[dockerDataVolumeName]; exists {
 		return status.Errorf(codes.InvalidArgument, "capability_volume_name_conflict: %s", dockerDataVolumeName)
 	}
@@ -165,6 +218,9 @@ func validateDockerInjection(containerNames, volumeNames map[string]struct{}, im
 		}
 		if _, exists := volumeNames[dockerTunVolumeName]; exists {
 			return status.Errorf(codes.InvalidArgument, "capability_volume_name_conflict: %s", dockerTunVolumeName)
+		}
+		if _, exists := volumeNames[dockerSubidVolumeName]; exists {
+			return status.Errorf(codes.InvalidArgument, "capability_volume_name_conflict: %s", dockerSubidVolumeName)
 		}
 	}
 	return nil
@@ -186,6 +242,8 @@ func dockerSidecarContainer(implementation config.DockerImplementation) corev1.C
 				{Name: dockerDataVolumeName, MountPath: dockerRootlessDataMountPath},
 				{Name: dockerRunVolumeName, MountPath: dockerRootlessRunMountPath},
 				{Name: dockerTunVolumeName, MountPath: dockerTunDevicePath},
+				{Name: dockerSubidVolumeName, MountPath: dockerSubuidMountPath, SubPath: dockerSubuidFileName, ReadOnly: true},
+				{Name: dockerSubidVolumeName, MountPath: dockerSubgidMountPath, SubPath: dockerSubgidFileName, ReadOnly: true},
 			},
 			// Rootless dockerd launches a nested runc; default RuntimeDefault
 			// seccomp/AppArmor profiles block mount-related syscalls (notably
@@ -216,6 +274,18 @@ func dockerSidecarContainer(implementation config.DockerImplementation) corev1.C
 	}
 }
 
+func dockerSubidInitContainer() corev1.Container {
+	return corev1.Container{
+		Name:    dockerSubidInitContainerName,
+		Image:   dockerRootlessImage,
+		Command: []string{"/bin/sh", "-c"},
+		Args:    []string{dockerSubidInitScript},
+		VolumeMounts: []corev1.VolumeMount{
+			{Name: dockerSubidVolumeName, MountPath: dockerSubidMountPath},
+		},
+	}
+}
+
 func dockerVolumes(implementation config.DockerImplementation) []corev1.Volume {
 	dataVolume := corev1.Volume{
 		Name: dockerDataVolumeName,
@@ -241,7 +311,13 @@ func dockerVolumes(implementation config.DockerImplementation) []corev1.Volume {
 				},
 			},
 		}
-		return []corev1.Volume{dataVolume, runVolume, tunVolume}
+		subidVolume := corev1.Volume{
+			Name: dockerSubidVolumeName,
+			VolumeSource: corev1.VolumeSource{
+				EmptyDir: &corev1.EmptyDirVolumeSource{},
+			},
+		}
+		return []corev1.Volume{dataVolume, runVolume, tunVolume, subidVolume}
 	case config.DockerImplementationPrivileged:
 		return []corev1.Volume{dataVolume}
 	default:

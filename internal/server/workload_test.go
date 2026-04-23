@@ -453,9 +453,20 @@ func TestStartWorkloadInjectsDockerRootless(t *testing.T) {
 		t.Fatalf("expected pod created: %v", err)
 	}
 
-	if pod.Spec.HostUsers != nil {
-		t.Fatalf("expected hostUsers to remain unset for rootless docker")
+	if pod.Spec.HostUsers == nil || *pod.Spec.HostUsers {
+		t.Fatalf("expected hostUsers false for rootless docker")
 	}
+	if len(pod.Spec.InitContainers) != 1 {
+		t.Fatalf("expected 1 init container, got %d", len(pod.Spec.InitContainers))
+	}
+	initContainer := pod.Spec.InitContainers[0]
+	if initContainer.Name != dockerSubidInitContainerName {
+		t.Fatalf("expected init container %q, got %q", dockerSubidInitContainerName, initContainer.Name)
+	}
+	if initContainer.Image != dockerRootlessImage {
+		t.Fatalf("expected subid init image %q, got %q", dockerRootlessImage, initContainer.Image)
+	}
+	assertVolumeMount(t, initContainer.VolumeMounts, dockerSubidVolumeName, dockerSubidMountPath)
 	assertAnnotation(t, pod.Annotations, dockerAppArmorLegacyAnnotationKey, dockerSecurityProfileUnconfined)
 	assertAnnotation(t, pod.Annotations, dockerSeccompPodAnnotationKey, dockerSecurityProfileUnconfined)
 	assertAnnotation(t, pod.Annotations, dockerSeccompContainerAnnotationKey, dockerSecurityProfileUnconfined)
@@ -492,9 +503,12 @@ func TestStartWorkloadInjectsDockerRootless(t *testing.T) {
 	assertVolumeMount(t, sidecar.VolumeMounts, dockerDataVolumeName, dockerRootlessDataMountPath)
 	assertVolumeMount(t, sidecar.VolumeMounts, dockerRunVolumeName, dockerRootlessRunMountPath)
 	assertVolumeMount(t, sidecar.VolumeMounts, dockerTunVolumeName, dockerTunDevicePath)
+	assertVolumeMountWithSubPath(t, sidecar.VolumeMounts, dockerSubidVolumeName, dockerSubuidMountPath, dockerSubuidFileName)
+	assertVolumeMountWithSubPath(t, sidecar.VolumeMounts, dockerSubidVolumeName, dockerSubgidMountPath, dockerSubgidFileName)
 	assertEmptyDirVolume(t, pod.Spec.Volumes, dockerDataVolumeName)
 	assertEmptyDirVolume(t, pod.Spec.Volumes, dockerRunVolumeName)
 	assertHostPathVolume(t, pod.Spec.Volumes, dockerTunVolumeName, dockerTunDevicePath, corev1.HostPathCharDev)
+	assertEmptyDirVolume(t, pod.Spec.Volumes, dockerSubidVolumeName)
 	assertSidecarInstance(t, resp.GetContainers().GetSidecars(), dockerSidecarName)
 }
 
@@ -644,6 +658,39 @@ func TestStartWorkloadRejectsDockerContainerNameConflict(t *testing.T) {
 	}
 }
 
+func TestStartWorkloadRejectsDockerSubidInitContainerNameConflict(t *testing.T) {
+	clientset := fake.NewSimpleClientset()
+	server := New(Options{
+		Clientset:   clientset,
+		Namespace:   "default",
+		StorageSize: "1Gi",
+		Logger:      zap.NewNop(),
+		CapabilityImplementations: config.CapabilityImplementations{
+			Docker: config.DockerImplementationRootless,
+		},
+	})
+
+	ctx := context.Background()
+	_, err := server.StartWorkload(ctx, &runnerv1.StartWorkloadRequest{
+		Main: &runnerv1.ContainerSpec{Name: "main", Image: "busybox"},
+		InitContainers: []*runnerv1.ContainerSpec{{
+			Name:  dockerSubidInitContainerName,
+			Image: "busybox",
+		}},
+		Capabilities: []string{dockerCapability},
+	})
+	if err == nil {
+		t.Fatal("expected error for docker init container name conflict")
+	}
+	st, ok := status.FromError(err)
+	if !ok || st.Code() != codes.InvalidArgument {
+		t.Fatalf("expected invalid argument error, got %v", err)
+	}
+	if !strings.Contains(st.Message(), "capability_container_name_conflict") {
+		t.Fatalf("expected container name conflict error, got %q", st.Message())
+	}
+}
+
 func TestStartWorkloadRejectsDockerVolumeNameConflict(t *testing.T) {
 	clientset := fake.NewSimpleClientset()
 	server := New(Options{
@@ -698,6 +745,39 @@ func TestStartWorkloadRejectsDockerTunVolumeNameConflict(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("expected error for docker tun volume name conflict")
+	}
+	st, ok := status.FromError(err)
+	if !ok || st.Code() != codes.InvalidArgument {
+		t.Fatalf("expected invalid argument error, got %v", err)
+	}
+	if !strings.Contains(st.Message(), "capability_volume_name_conflict") {
+		t.Fatalf("expected volume name conflict error, got %q", st.Message())
+	}
+}
+
+func TestStartWorkloadRejectsDockerSubidVolumeNameConflict(t *testing.T) {
+	clientset := fake.NewSimpleClientset()
+	server := New(Options{
+		Clientset:   clientset,
+		Namespace:   "default",
+		StorageSize: "1Gi",
+		Logger:      zap.NewNop(),
+		CapabilityImplementations: config.CapabilityImplementations{
+			Docker: config.DockerImplementationRootless,
+		},
+	})
+
+	ctx := context.Background()
+	_, err := server.StartWorkload(ctx, &runnerv1.StartWorkloadRequest{
+		Main: &runnerv1.ContainerSpec{Name: "main", Image: "busybox"},
+		Volumes: []*runnerv1.VolumeSpec{{
+			Name: dockerSubidVolumeName,
+			Kind: runnerv1.VolumeKind_VOLUME_KIND_EPHEMERAL,
+		}},
+		Capabilities: []string{dockerCapability},
+	})
+	if err == nil {
+		t.Fatal("expected error for docker subid volume name conflict")
 	}
 	st, ok := status.FromError(err)
 	if !ok || st.Code() != codes.InvalidArgument {
@@ -1301,6 +1381,23 @@ func assertVolumeMount(t *testing.T, mounts []corev1.VolumeMount, name, mountPat
 		return
 	}
 	t.Fatalf("expected mount %s", name)
+}
+
+func assertVolumeMountWithSubPath(t *testing.T, mounts []corev1.VolumeMount, name, mountPath, subPath string) {
+	t.Helper()
+	for _, mount := range mounts {
+		if mount.Name != name {
+			continue
+		}
+		if mount.MountPath != mountPath {
+			continue
+		}
+		if mount.SubPath != subPath {
+			t.Fatalf("expected mount %s subPath %q, got %q", name, subPath, mount.SubPath)
+		}
+		return
+	}
+	t.Fatalf("expected mount %s at %q", name, mountPath)
 }
 
 func assertEmptyDirVolume(t *testing.T, volumes []corev1.Volume, name string) {
