@@ -20,6 +20,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/validation"
 
 	runnerv1 "github.com/agynio/k8s-runner/internal/.gen/agynio/api/runner/v1"
+	"github.com/agynio/k8s-runner/internal/config"
 )
 
 type dockerConfig struct {
@@ -80,6 +81,11 @@ func (s *Server) StartWorkload(ctx context.Context, req *runnerv1.StartWorkloadR
 	}
 	if len(secretNames) > 0 {
 		annotations[secretAnnotationKey] = strings.Join(secretNames, ",")
+	}
+	if capabilityPlan.dockerImplementation == config.DockerImplementationRootless {
+		annotations[dockerAppArmorLegacyAnnotationKey] = dockerSecurityProfileUnconfined
+		annotations[dockerSeccompPodAnnotationKey] = dockerSecurityProfileUnconfined
+		annotations[dockerSeccompContainerAnnotationKey] = dockerSecurityProfileUnconfined
 	}
 
 	pod := &corev1.Pod{
