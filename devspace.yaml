@@ -37,15 +37,6 @@ functions:
       {"op": "add", "path": "/spec/template/spec/containers/0/command",
        "value": ["sh", "-c", "set -eu; elapsed=0; while [ ! -f /opt/app/data/go.mod ] || [ ! -f /opt/app/data/buf.gen.yaml ] || [ ! -f /opt/app/data/cmd/k8s-runner/main.go ]; do sleep 1; elapsed=$((elapsed + 1)); [ $elapsed -ge 120 ] && exit 1; done; echo Generating protobuf types...; buf generate --include-imports --template /opt/app/data/buf.gen.yaml -o /opt/app/data; cd /opt/app/data; echo Tidying Go modules...; go mod tidy; echo Starting k8s-runner...; go build -o /tmp/k8s-runner ./cmd/k8s-runner && exec /tmp/k8s-runner"]},
 
-      {"op": "replace", "path": "/spec/template/spec/containers/0/env",
-       "value": [
-         {"name": "GRPC_ADDR", "value": "0.0.0.0:50051"},
-         {"name": "KUBE_NAMESPACE", "value": "agyn-workloads"},
-         {"name": "PVC_STORAGE_SIZE", "value": "10Gi"},
-         {"name": "ZITI_ENABLED", "value": "false"},
-         {"name": "LOG_LEVEL", "value": "info"}
-       ]},
-
       {"op": "add", "path": "/spec/template/spec/containers/0/volumeMounts",
        "value": [{"name": "data", "mountPath": "/opt/app/data"}]},
 
@@ -80,6 +71,13 @@ functions:
     ]
     PATCH
     )"
+    kubectl set env deployment k8s-runner -n ${K8S_RUNNER_NAMESPACE} \
+      --containers=k8s-runner \
+      GRPC_ADDR=0.0.0.0:50051 \
+      KUBE_NAMESPACE=agyn-workloads \
+      PVC_STORAGE_SIZE=10Gi \
+      ZITI_ENABLED=false \
+      LOG_LEVEL=info
   wait_for_k8s_runner: |-
     echo "Waiting for k8s-runner deployment to roll out..."
     kubectl rollout status deployment/k8s-runner \
