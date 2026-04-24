@@ -29,12 +29,10 @@ devspace dev
 devspace dev -w
 ```
 
-### Run tests
+### E2E tests
 
-```bash
-devspace run test:e2e
-```
-
+E2E coverage runs from the centralized suite in
+[`agynio/e2e`](https://github.com/agynio/e2e) using the `k8s_runner` service tag.
 See [E2E Testing](https://github.com/agynio/architecture/blob/main/architecture/operations/e2e-testing.md).
 
 ## Docker capability notes
