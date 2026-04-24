@@ -71,13 +71,6 @@ functions:
     ]
     PATCH
     )"
-    kubectl set env deployment k8s-runner -n ${K8S_RUNNER_NAMESPACE} \
-      --containers=k8s-runner \
-      GRPC_ADDR=0.0.0.0:50051 \
-      KUBE_NAMESPACE=agyn-workloads \
-      PVC_STORAGE_SIZE=10Gi \
-      ZITI_ENABLED=false \
-      LOG_LEVEL=info
   wait_for_k8s_runner: |-
     echo "Waiting for k8s-runner deployment to roll out..."
     kubectl rollout status deployment/k8s-runner \
