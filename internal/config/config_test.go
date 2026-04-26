@@ -98,6 +98,16 @@ func TestParseCapabilityImplementations(t *testing.T) {
 			expected: CapabilityImplementations{Docker: DockerImplementationPrivileged},
 		},
 		{
+			name:     "kata qemu",
+			raw:      `{"docker":"kata-qemu"}`,
+			expected: CapabilityImplementations{Docker: DockerImplementationKataQemu},
+		},
+		{
+			name:     "kata fc",
+			raw:      `{"docker":"kata-fc"}`,
+			expected: CapabilityImplementations{Docker: DockerImplementationKataFc},
+		},
+		{
 			name:        "invalid docker",
 			raw:         `{"docker":"unsupported"}`,
 			errContains: "invalid docker capability implementation",
