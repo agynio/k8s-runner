@@ -55,3 +55,11 @@ permissions and mounts to allow `docker run` to work:
 
 These settings can require Pod Security Admission exceptions for docker-capable
 workloads (baseline/restricted clusters may reject them).
+
+### Kata (microVM) docker runtimes
+
+`CAPABILITY_IMPLEMENTATIONS` also supports `docker: kata-qemu` (and optionally
+`docker: kata-fc`). When enabled, k8s-runner keeps the privileged DinD sidecar
+behavior but sets `pod.spec.runtimeClassName` to match the selected Kata
+implementation. The cluster must provide the matching RuntimeClass and schedule
+onto KVM-capable nodes. This cannot be validated on local k3d/mac setups.

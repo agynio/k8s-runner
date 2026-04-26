@@ -79,6 +79,7 @@ write_subid "/subid/subgid" "$gid_length"
 
 type capabilityPlan struct {
 	dockerImplementation config.DockerImplementation
+	runtimeClassName     *string
 }
 
 func resolveCapabilityPlan(req *runnerv1.StartWorkloadRequest, implementations config.CapabilityImplementations) (capabilityPlan, error) {
@@ -101,13 +102,14 @@ func resolveCapabilityPlan(req *runnerv1.StartWorkloadRequest, implementations c
 			if implementation == "" {
 				return plan, status.Error(codes.InvalidArgument, "docker_capability_not_configured")
 			}
-			if implementation != config.DockerImplementationRootless && implementation != config.DockerImplementationPrivileged {
+			if !isSupportedDockerImplementation(implementation) {
 				return plan, status.Errorf(codes.InvalidArgument, "unknown_docker_implementation: %s", implementation)
 			}
 			if err := validateDockerInjection(containerNames, volumeNames, implementation); err != nil {
 				return plan, err
 			}
 			plan.dockerImplementation = implementation
+			plan.runtimeClassName = dockerRuntimeClassName(implementation)
 		default:
 			return plan, status.Errorf(codes.InvalidArgument, "unknown_capability: %s", capability)
 		}
@@ -255,7 +257,7 @@ func dockerSidecarContainer(implementation config.DockerImplementation) corev1.C
 				ProcMount:                &procMount,
 			},
 		}
-	case config.DockerImplementationPrivileged:
+	case config.DockerImplementationPrivileged, config.DockerImplementationKataQemu, config.DockerImplementationKataFc:
 		privileged := true
 		return corev1.Container{
 			Name:  dockerSidecarName,
@@ -318,8 +320,32 @@ func dockerVolumes(implementation config.DockerImplementation) []corev1.Volume {
 			},
 		}
 		return []corev1.Volume{dataVolume, runVolume, tunVolume, subidVolume}
-	case config.DockerImplementationPrivileged:
+	case config.DockerImplementationPrivileged, config.DockerImplementationKataQemu, config.DockerImplementationKataFc:
 		return []corev1.Volume{dataVolume}
+	default:
+		panic(fmt.Sprintf("unsupported docker implementation: %s", implementation))
+	}
+}
+
+func isSupportedDockerImplementation(implementation config.DockerImplementation) bool {
+	switch implementation {
+	case config.DockerImplementationRootless,
+		config.DockerImplementationPrivileged,
+		config.DockerImplementationKataQemu,
+		config.DockerImplementationKataFc:
+		return true
+	default:
+		return false
+	}
+}
+
+func dockerRuntimeClassName(implementation config.DockerImplementation) *string {
+	switch implementation {
+	case config.DockerImplementationRootless, config.DockerImplementationPrivileged:
+		return nil
+	case config.DockerImplementationKataQemu, config.DockerImplementationKataFc:
+		name := string(implementation)
+		return &name
 	default:
 		panic(fmt.Sprintf("unsupported docker implementation: %s", implementation))
 	}

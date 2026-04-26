@@ -456,6 +456,7 @@ func TestStartWorkloadInjectsDockerRootless(t *testing.T) {
 	if pod.Spec.HostUsers == nil || *pod.Spec.HostUsers {
 		t.Fatalf("expected hostUsers false for rootless docker")
 	}
+	assertRuntimeClassNameUnset(t, pod.Spec.RuntimeClassName)
 	if len(pod.Spec.InitContainers) != 1 {
 		t.Fatalf("expected 1 init container, got %d", len(pod.Spec.InitContainers))
 	}
@@ -544,36 +545,80 @@ func TestStartWorkloadInjectsDockerPrivileged(t *testing.T) {
 	if pod.Spec.HostUsers != nil {
 		t.Fatalf("expected hostUsers to remain unset for privileged docker")
 	}
+	assertRuntimeClassNameUnset(t, pod.Spec.RuntimeClassName)
+	assertPrivilegedDockerInjection(t, pod, resp)
+}
 
-	main := findContainer(pod.Spec.Containers, "main")
-	if main == nil {
-		t.Fatal("expected main container")
-	}
-	assertEnvValue(t, main.Env, dockerHostEnvName, dockerHostEnvValue)
+func TestStartWorkloadInjectsDockerKataQemu(t *testing.T) {
+	clientset := fake.NewSimpleClientset()
+	server := New(Options{
+		Clientset:   clientset,
+		Namespace:   "default",
+		StorageSize: "1Gi",
+		Logger:      zap.NewNop(),
+		CapabilityImplementations: config.CapabilityImplementations{
+			Docker: config.DockerImplementationKataQemu,
+		},
+	})
 
-	sidecar := findContainer(pod.Spec.Containers, dockerSidecarName)
-	if sidecar == nil {
-		t.Fatal("expected docker sidecar container")
+	ctx := context.Background()
+	req := &runnerv1.StartWorkloadRequest{
+		Main:         &runnerv1.ContainerSpec{Name: "main", Image: "busybox"},
+		Capabilities: []string{dockerCapability},
 	}
-	if sidecar.Image != dockerPrivilegedImage {
-		t.Fatalf("expected privileged docker image %q, got %q", dockerPrivilegedImage, sidecar.Image)
+
+	resp, err := server.StartWorkload(ctx, req)
+	if err != nil {
+		t.Fatalf("StartWorkload returned error: %v", err)
 	}
-	if sidecar.SecurityContext == nil || sidecar.SecurityContext.Privileged == nil || !*sidecar.SecurityContext.Privileged {
-		t.Fatalf("expected docker sidecar to be privileged")
+
+	podName := podNameFromID(resp.Id)
+	pod, err := clientset.CoreV1().Pods("default").Get(ctx, podName, metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("expected pod created: %v", err)
 	}
-	if sidecar.SecurityContext.AllowPrivilegeEscalation == nil || !*sidecar.SecurityContext.AllowPrivilegeEscalation {
-		t.Fatalf("expected docker sidecar to allow privilege escalation")
+
+	if pod.Spec.HostUsers != nil {
+		t.Fatalf("expected hostUsers to remain unset for kata docker")
 	}
-	assertEnvValue(t, sidecar.Env, dockerTLSCertDirEnvName, dockerTLSCertDirDisabledValue)
-	assertVolumeMount(t, sidecar.VolumeMounts, dockerDataVolumeName, dockerPrivilegedDataMountPath)
-	assertEmptyDirVolume(t, pod.Spec.Volumes, dockerDataVolumeName)
-	if findVolume(pod.Spec.Volumes, dockerRunVolumeName) != nil {
-		t.Fatalf("expected no docker run volume for privileged docker")
+	assertRuntimeClassName(t, pod.Spec.RuntimeClassName, string(config.DockerImplementationKataQemu))
+	assertPrivilegedDockerInjection(t, pod, resp)
+}
+
+func TestStartWorkloadInjectsDockerKataFc(t *testing.T) {
+	clientset := fake.NewSimpleClientset()
+	server := New(Options{
+		Clientset:   clientset,
+		Namespace:   "default",
+		StorageSize: "1Gi",
+		Logger:      zap.NewNop(),
+		CapabilityImplementations: config.CapabilityImplementations{
+			Docker: config.DockerImplementationKataFc,
+		},
+	})
+
+	ctx := context.Background()
+	req := &runnerv1.StartWorkloadRequest{
+		Main:         &runnerv1.ContainerSpec{Name: "main", Image: "busybox"},
+		Capabilities: []string{dockerCapability},
 	}
-	if findVolume(pod.Spec.Volumes, dockerTunVolumeName) != nil {
-		t.Fatalf("expected no docker tun volume for privileged docker")
+
+	resp, err := server.StartWorkload(ctx, req)
+	if err != nil {
+		t.Fatalf("StartWorkload returned error: %v", err)
 	}
-	assertSidecarInstance(t, resp.GetContainers().GetSidecars(), dockerSidecarName)
+
+	podName := podNameFromID(resp.Id)
+	pod, err := clientset.CoreV1().Pods("default").Get(ctx, podName, metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("expected pod created: %v", err)
+	}
+
+	if pod.Spec.HostUsers != nil {
+		t.Fatalf("expected hostUsers to remain unset for kata docker")
+	}
+	assertRuntimeClassName(t, pod.Spec.RuntimeClassName, string(config.DockerImplementationKataFc))
+	assertPrivilegedDockerInjection(t, pod, resp)
 }
 
 func TestStartWorkloadRejectsUnknownCapability(t *testing.T) {
@@ -1356,6 +1401,56 @@ func assertEnvValue(t *testing.T, envs []corev1.EnvVar, name, expected string) {
 		return
 	}
 	t.Fatalf("expected env %s to be set", name)
+}
+
+func assertPrivilegedDockerInjection(t *testing.T, pod *corev1.Pod, resp *runnerv1.StartWorkloadResponse) {
+	t.Helper()
+	main := findContainer(pod.Spec.Containers, "main")
+	if main == nil {
+		t.Fatal("expected main container")
+	}
+	assertEnvValue(t, main.Env, dockerHostEnvName, dockerHostEnvValue)
+
+	sidecar := findContainer(pod.Spec.Containers, dockerSidecarName)
+	if sidecar == nil {
+		t.Fatal("expected docker sidecar container")
+	}
+	if sidecar.Image != dockerPrivilegedImage {
+		t.Fatalf("expected privileged docker image %q, got %q", dockerPrivilegedImage, sidecar.Image)
+	}
+	if sidecar.SecurityContext == nil || sidecar.SecurityContext.Privileged == nil || !*sidecar.SecurityContext.Privileged {
+		t.Fatalf("expected docker sidecar to be privileged")
+	}
+	if sidecar.SecurityContext.AllowPrivilegeEscalation == nil || !*sidecar.SecurityContext.AllowPrivilegeEscalation {
+		t.Fatalf("expected docker sidecar to allow privilege escalation")
+	}
+	assertEnvValue(t, sidecar.Env, dockerTLSCertDirEnvName, dockerTLSCertDirDisabledValue)
+	assertVolumeMount(t, sidecar.VolumeMounts, dockerDataVolumeName, dockerPrivilegedDataMountPath)
+	assertEmptyDirVolume(t, pod.Spec.Volumes, dockerDataVolumeName)
+	if findVolume(pod.Spec.Volumes, dockerRunVolumeName) != nil {
+		t.Fatalf("expected no docker run volume for privileged docker")
+	}
+	if findVolume(pod.Spec.Volumes, dockerTunVolumeName) != nil {
+		t.Fatalf("expected no docker tun volume for privileged docker")
+	}
+	assertSidecarInstance(t, resp.GetContainers().GetSidecars(), dockerSidecarName)
+}
+
+func assertRuntimeClassName(t *testing.T, runtimeClassName *string, expected string) {
+	t.Helper()
+	if runtimeClassName == nil {
+		t.Fatalf("expected runtimeClassName %q", expected)
+	}
+	if *runtimeClassName != expected {
+		t.Fatalf("expected runtimeClassName %q, got %q", expected, *runtimeClassName)
+	}
+}
+
+func assertRuntimeClassNameUnset(t *testing.T, runtimeClassName *string) {
+	t.Helper()
+	if runtimeClassName != nil {
+		t.Fatalf("expected runtimeClassName to be unset")
+	}
 }
 
 func assertAnnotation(t *testing.T, annotations map[string]string, key, expected string) {

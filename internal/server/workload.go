@@ -106,6 +106,9 @@ func (s *Server) StartWorkload(ctx context.Context, req *runnerv1.StartWorkloadR
 	if hostUsers != nil {
 		pod.Spec.HostUsers = hostUsers
 	}
+	if capabilityPlan.runtimeClassName != nil {
+		pod.Spec.RuntimeClassName = capabilityPlan.runtimeClassName
+	}
 
 	if len(imagePullSecrets) > 0 {
 		pod.Spec.ImagePullSecrets = imagePullSecrets

@@ -38,6 +38,8 @@ type DockerImplementation string
 const (
 	DockerImplementationRootless   DockerImplementation = "rootless"
 	DockerImplementationPrivileged DockerImplementation = "privileged"
+	DockerImplementationKataQemu   DockerImplementation = "kata-qemu"
+	DockerImplementationKataFc     DockerImplementation = "kata-fc"
 )
 
 type CapabilityImplementations struct {
@@ -185,6 +187,10 @@ func parseCapabilityImplementations(raw string) (CapabilityImplementations, erro
 				implementations.Docker = DockerImplementationRootless
 			case DockerImplementationPrivileged:
 				implementations.Docker = DockerImplementationPrivileged
+			case DockerImplementationKataQemu:
+				implementations.Docker = DockerImplementationKataQemu
+			case DockerImplementationKataFc:
+				implementations.Docker = DockerImplementationKataFc
 			default:
 				return CapabilityImplementations{}, fmt.Errorf("invalid docker capability implementation %q", value)
 			}
