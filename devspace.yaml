@@ -99,9 +99,9 @@ functions:
 
 commands:
   deploy: |-
-    devspace run-pipeline deploy -n ${DEVSPACE_NAMESPACE} $@
+    devspace run-pipeline deploy $@
   restore-argocd: |-
-    devspace run-pipeline restore-argocd -n ${DEVSPACE_NAMESPACE} $@
+    devspace run-pipeline restore-argocd $@
 
 pipelines:
   dev:
