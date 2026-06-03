@@ -63,3 +63,17 @@ workloads (baseline/restricted clusters may reject them).
 behavior but sets `pod.spec.runtimeClassName` to match the selected Kata
 implementation. The cluster must provide the matching RuntimeClass and schedule
 onto KVM-capable nodes. This cannot be validated on local k3d/mac setups.
+
+## Workload egress NetworkPolicy
+
+The Helm chart can install the static egress NetworkPolicy used by egress v1.
+Enable `workloadEgressNetworkPolicy.enabled` and set `workloadNamespace` to the
+namespace where runner-created workload pods run. The policy selects workload
+pods with `agyn.dev/managed-by=agents-orchestrator`, allows OpenZiti synthetic
+addresses (`100.64.0.0/10`), cluster DNS, and public internet, and excludes the
+CIDRs listed in `workloadEgressNetworkPolicy.blockedCIDRs` from public internet
+egress. Operators should include the cluster pod CIDR, cluster service CIDR, and
+any additional internal CIDRs in that list.
+
+The runner runtime does not create or update NetworkPolicy resources, and its
+ServiceAccount does not need `networkpolicies` RBAC.

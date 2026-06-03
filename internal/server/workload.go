@@ -5,6 +5,8 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"path"
+	"sort"
 	"strings"
 	"time"
 
@@ -70,8 +72,29 @@ func (s *Server) StartWorkload(ctx context.Context, req *runnerv1.StartWorkloadR
 		return nil, err
 	}
 
-	containers, initContainers, sidecarNames, err := buildContainers(req, volumes)
+	inlineFiles, err := validateInlineFiles(req)
 	if err != nil {
+		s.deleteImagePullSecrets(ctx, workloadID, secretNames)
+		return nil, err
+	}
+	inlineSecretName, inlineFileKeys, err := s.createInlineFilesSecret(ctx, workloadID, inlineFiles)
+	if err != nil {
+		s.deleteImagePullSecrets(ctx, workloadID, secretNames)
+		return nil, err
+	}
+	if inlineSecretName != "" {
+		secretNames = append(secretNames, inlineSecretName)
+		volumes = append(volumes, corev1.Volume{
+			Name: inlineFilesVolumeName,
+			VolumeSource: corev1.VolumeSource{
+				Secret: &corev1.SecretVolumeSource{SecretName: inlineSecretName},
+			},
+		})
+	}
+
+	containers, initContainers, sidecarNames, err := buildContainers(req, volumes, inlineFileKeys)
+	if err != nil {
+		s.deleteImagePullSecrets(ctx, workloadID, secretNames)
 		return nil, err
 	}
 	hostUsers := capabilityPlan.apply(&containers, &initContainers, &volumes, &sidecarNames)
@@ -391,8 +414,9 @@ func (s *Server) TouchWorkload(ctx context.Context, req *runnerv1.TouchWorkloadR
 
 func buildLabels(workloadID string, additional map[string]string, explicit map[string]string) (map[string]string, error) {
 	labels := map[string]string{
-		managedByLabelKey:  managedByLabelValue,
-		workloadIDLabelKey: workloadID,
+		managedByLabelKey:         managedByLabelValue,
+		workloadManagedByLabelKey: workloadManagedByLabelValue,
+		workloadIDLabelKey:        workloadID,
 	}
 
 	for key, value := range additional {
@@ -428,7 +452,7 @@ func addLabel(target map[string]string, labelKey, value string) error {
 	if labelKey == "" {
 		return fmt.Errorf("empty label key")
 	}
-	if labelKey == managedByLabelKey || labelKey == workloadIDLabelKey {
+	if labelKey == managedByLabelKey || labelKey == workloadManagedByLabelKey || labelKey == workloadIDLabelKey {
 		return fmt.Errorf("reserved label key %q", labelKey)
 	}
 	if errs := validation.IsQualifiedName(labelKey); len(errs) > 0 {
@@ -660,7 +684,7 @@ func (s *Server) ensurePVC(ctx context.Context, volume *runnerv1.VolumeSpec, lab
 	return pvcName, nil
 }
 
-func buildContainers(req *runnerv1.StartWorkloadRequest, volumes []corev1.Volume) ([]corev1.Container, []corev1.Container, []string, error) {
+func buildContainers(req *runnerv1.StartWorkloadRequest, volumes []corev1.Volume, inlineFileKeys map[string]string) ([]corev1.Container, []corev1.Container, []string, error) {
 	volumeLookup := make(map[string]struct{}, len(volumes))
 	for _, volume := range volumes {
 		volumeLookup[volume.Name] = struct{}{}
@@ -670,7 +694,7 @@ func buildContainers(req *runnerv1.StartWorkloadRequest, volumes []corev1.Volume
 	initContainers := make([]corev1.Container, 0, len(req.InitContainers))
 	nameLookup := make(map[string]struct{}, 1+len(req.Sidecars)+len(req.InitContainers))
 
-	mainContainer, err := buildContainer(req.Main, "main", volumeLookup)
+	mainContainer, err := buildContainer(req.Main, "main", volumeLookup, inlineFileKeys)
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -679,7 +703,7 @@ func buildContainers(req *runnerv1.StartWorkloadRequest, volumes []corev1.Volume
 
 	sidecarNames := make([]string, 0, len(req.Sidecars))
 	for idx, sidecar := range req.Sidecars {
-		container, err := buildContainer(sidecar, fmt.Sprintf("sidecar-%d", idx+1), volumeLookup)
+		container, err := buildContainer(sidecar, fmt.Sprintf("sidecar-%d", idx+1), volumeLookup, inlineFileKeys)
 		if err != nil {
 			return nil, nil, nil, err
 		}
@@ -692,7 +716,7 @@ func buildContainers(req *runnerv1.StartWorkloadRequest, volumes []corev1.Volume
 	}
 
 	for idx, initContainer := range req.InitContainers {
-		container, err := buildContainer(initContainer, fmt.Sprintf("init-%d", idx+1), volumeLookup)
+		container, err := buildContainer(initContainer, fmt.Sprintf("init-%d", idx+1), volumeLookup, inlineFileKeys)
 		if err != nil {
 			return nil, nil, nil, err
 		}
@@ -706,7 +730,7 @@ func buildContainers(req *runnerv1.StartWorkloadRequest, volumes []corev1.Volume
 	return containers, initContainers, sidecarNames, nil
 }
 
-func buildContainer(spec *runnerv1.ContainerSpec, fallbackName string, volumeLookup map[string]struct{}) (corev1.Container, error) {
+func buildContainer(spec *runnerv1.ContainerSpec, fallbackName string, volumeLookup map[string]struct{}, inlineFileKeys map[string]string) (corev1.Container, error) {
 	if spec == nil {
 		return corev1.Container{}, status.Error(codes.InvalidArgument, "container_spec_required")
 	}
@@ -722,7 +746,7 @@ func buildContainer(spec *runnerv1.ContainerSpec, fallbackName string, volumeLoo
 		return corev1.Container{}, status.Error(codes.InvalidArgument, "container_image_required")
 	}
 
-	volumeMounts := make([]corev1.VolumeMount, 0, len(spec.Mounts))
+	volumeMounts := make([]corev1.VolumeMount, 0, len(spec.Mounts)+len(spec.InlineFileMounts))
 	for _, mount := range spec.Mounts {
 		if mount == nil {
 			continue
@@ -742,6 +766,23 @@ func buildContainer(spec *runnerv1.ContainerSpec, fallbackName string, volumeLoo
 			Name:      volumeName,
 			MountPath: mountPath,
 			ReadOnly:  mount.ReadOnly,
+		})
+	}
+
+	for _, mount := range spec.InlineFileMounts {
+		if mount == nil {
+			continue
+		}
+		mountPath := strings.TrimSpace(mount.GetPath())
+		secretKey, ok := inlineFileKeys[mountPath]
+		if !ok {
+			return corev1.Container{}, status.Errorf(codes.InvalidArgument, "inline_file_not_defined: %s", mountPath)
+		}
+		volumeMounts = append(volumeMounts, corev1.VolumeMount{
+			Name:      inlineFilesVolumeName,
+			MountPath: mountPath,
+			SubPath:   secretKey,
+			ReadOnly:  true,
 		})
 	}
 
@@ -868,4 +909,107 @@ func mountsForPod(pod *corev1.Pod, mainContainerName string) []*runnerv1.TargetM
 	}
 
 	return mounts
+}
+
+func validateInlineFiles(req *runnerv1.StartWorkloadRequest) (map[string][]byte, error) {
+	inlineFiles := req.GetInlineFiles()
+	if len(inlineFiles) == 0 {
+		if hasInlineFileMounts(req) {
+			return nil, status.Error(codes.InvalidArgument, "inline_file_not_defined")
+		}
+		return nil, nil
+	}
+
+	for filePath := range inlineFiles {
+		if err := validateInlineFilePath(filePath); err != nil {
+			return nil, err
+		}
+	}
+
+	referenced := make(map[string]struct{})
+	containers := append([]*runnerv1.ContainerSpec{req.GetMain()}, req.GetSidecars()...)
+	containers = append(containers, req.GetInitContainers()...)
+	for _, container := range containers {
+		if container == nil {
+			continue
+		}
+		for _, mount := range container.GetInlineFileMounts() {
+			if mount == nil {
+				continue
+			}
+			mountPath := strings.TrimSpace(mount.GetPath())
+			if err := validateInlineFilePath(mountPath); err != nil {
+				return nil, err
+			}
+			if _, ok := inlineFiles[mountPath]; !ok {
+				return nil, status.Errorf(codes.InvalidArgument, "inline_file_not_defined: %s", mountPath)
+			}
+			referenced[mountPath] = struct{}{}
+		}
+	}
+
+	for filePath := range inlineFiles {
+		if _, ok := referenced[filePath]; !ok {
+			return nil, status.Errorf(codes.InvalidArgument, "inline_file_not_referenced: %s", filePath)
+		}
+	}
+
+	return inlineFiles, nil
+}
+
+func hasInlineFileMounts(req *runnerv1.StartWorkloadRequest) bool {
+	containers := append([]*runnerv1.ContainerSpec{req.GetMain()}, req.GetSidecars()...)
+	containers = append(containers, req.GetInitContainers()...)
+	for _, container := range containers {
+		if len(container.GetInlineFileMounts()) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+func validateInlineFilePath(filePath string) error {
+	if filePath == "" || !path.IsAbs(filePath) || path.Clean(filePath) != filePath {
+		return status.Errorf(codes.InvalidArgument, "inline_file_path_invalid: %s", filePath)
+	}
+	return nil
+}
+
+func (s *Server) createInlineFilesSecret(ctx context.Context, workloadID string, inlineFiles map[string][]byte) (string, map[string]string, error) {
+	if len(inlineFiles) == 0 {
+		return "", nil, nil
+	}
+
+	paths := make([]string, 0, len(inlineFiles))
+	for filePath := range inlineFiles {
+		paths = append(paths, filePath)
+	}
+	sort.Strings(paths)
+
+	data := make(map[string][]byte, len(paths))
+	keys := make(map[string]string, len(paths))
+	for idx, filePath := range paths {
+		key := fmt.Sprintf("inline-file-%d", idx)
+		data[key] = append([]byte(nil), inlineFiles[filePath]...)
+		keys[filePath] = key
+	}
+
+	secretName := fmt.Sprintf("workload-%s-inline-files", workloadID)
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      secretName,
+			Namespace: s.namespace,
+			Labels: map[string]string{
+				managedByLabelKey:  managedByLabelValue,
+				workloadIDLabelKey: workloadID,
+			},
+		},
+		Type: corev1.SecretTypeOpaque,
+		Data: data,
+	}
+	if _, err := s.clientset.CoreV1().Secrets(s.namespace).Create(ctx, secret, metav1.CreateOptions{}); err != nil {
+		return "", nil, grpcErrorFromKube(s.logger, err, codes.Internal)
+	}
+
+	return secretName, keys, nil
 }
