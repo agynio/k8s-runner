@@ -32,10 +32,11 @@ func TestBuildLabelsFiltersAndValidates(t *testing.T) {
 	}
 
 	expected := map[string]string{
-		managedByLabelKey:   managedByLabelValue,
-		workloadIDLabelKey:  "uuid-1",
-		workloadKeyLabelKey: "workload-1",
-		"team":              "core",
+		managedByLabelKey:         managedByLabelValue,
+		workloadManagedByLabelKey: workloadManagedByLabelValue,
+		workloadIDLabelKey:        "uuid-1",
+		workloadKeyLabelKey:       "workload-1",
+		"team":                    "core",
 	}
 	if !reflect.DeepEqual(labels, expected) {
 		t.Fatalf("labels mismatch: got %#v want %#v", labels, expected)
@@ -59,9 +60,11 @@ func TestBuildLabelsRejectsInvalidExplicitLabel(t *testing.T) {
 }
 
 func TestBuildLabelsRejectsReservedLabel(t *testing.T) {
-	_, err := buildLabels("uuid-1", nil, map[string]string{managedByLabelKey: "override"})
-	if err == nil {
-		t.Fatalf("expected error for reserved label key")
+	for _, key := range []string{managedByLabelKey, workloadManagedByLabelKey} {
+		_, err := buildLabels("uuid-1", nil, map[string]string{key: "override"})
+		if err == nil {
+			t.Fatalf("expected error for reserved label key %s", key)
+		}
 	}
 }
 
@@ -345,6 +348,9 @@ func TestStartWorkloadUsesProvidedWorkloadID(t *testing.T) {
 	}
 	if pod.Labels[workloadIDLabelKey] != workloadID {
 		t.Fatalf("expected workload label %q, got %q", workloadID, pod.Labels[workloadIDLabelKey])
+	}
+	if pod.Labels[workloadManagedByLabelKey] != workloadManagedByLabelValue {
+		t.Fatalf("expected workload managed-by label %q, got %q", workloadManagedByLabelValue, pod.Labels[workloadManagedByLabelKey])
 	}
 }
 
@@ -1025,6 +1031,9 @@ func TestStartWorkloadAppliesLabelsToPodAndPVC(t *testing.T) {
 	}
 	if pod.Labels[managedByLabelKey] != managedByLabelValue {
 		t.Fatalf("expected managed-by label %q, got %q", managedByLabelValue, pod.Labels[managedByLabelKey])
+	}
+	if pod.Labels[workloadManagedByLabelKey] != workloadManagedByLabelValue {
+		t.Fatalf("expected workload managed-by label %q, got %q", workloadManagedByLabelValue, pod.Labels[workloadManagedByLabelKey])
 	}
 	if pod.Labels[workloadIDLabelKey] != resp.Id {
 		t.Fatalf("expected workload id label %q, got %q", resp.Id, pod.Labels[workloadIDLabelKey])

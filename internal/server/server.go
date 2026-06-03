@@ -13,15 +13,17 @@ import (
 )
 
 const (
-	managedByLabelKey      = "app.kubernetes.io/managed-by"
-	managedByLabelValue    = "k8s-runner"
-	workloadIDLabelKey     = "agyn.io/workload-id"
-	workloadKeyLabelKey    = "workload_key"
-	volumeKeyLabelKey      = "volume_key"
-	pvcAnnotationKey       = "agyn.io/pvc-names"
-	secretAnnotationKey    = "agyn.io/pull-secret-names"
-	inlineFilesVolumeName  = "inline-files"
-	touchedAtAnnotationKey = "agyn.io/touched-at"
+	managedByLabelKey           = "app.kubernetes.io/managed-by"
+	managedByLabelValue         = "k8s-runner"
+	workloadManagedByLabelKey   = "agyn.dev/managed-by"
+	workloadManagedByLabelValue = "agents-orchestrator"
+	workloadIDLabelKey          = "agyn.io/workload-id"
+	workloadKeyLabelKey         = "workload_key"
+	volumeKeyLabelKey           = "volume_key"
+	pvcAnnotationKey            = "agyn.io/pvc-names"
+	secretAnnotationKey         = "agyn.io/pull-secret-names"
+	inlineFilesVolumeName       = "inline-files"
+	touchedAtAnnotationKey      = "agyn.io/touched-at"
 )
 
 // Server implements the RunnerService gRPC API against the Kubernetes API.

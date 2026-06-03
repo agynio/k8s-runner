@@ -414,8 +414,9 @@ func (s *Server) TouchWorkload(ctx context.Context, req *runnerv1.TouchWorkloadR
 
 func buildLabels(workloadID string, additional map[string]string, explicit map[string]string) (map[string]string, error) {
 	labels := map[string]string{
-		managedByLabelKey:  managedByLabelValue,
-		workloadIDLabelKey: workloadID,
+		managedByLabelKey:         managedByLabelValue,
+		workloadManagedByLabelKey: workloadManagedByLabelValue,
+		workloadIDLabelKey:        workloadID,
 	}
 
 	for key, value := range additional {
@@ -451,7 +452,7 @@ func addLabel(target map[string]string, labelKey, value string) error {
 	if labelKey == "" {
 		return fmt.Errorf("empty label key")
 	}
-	if labelKey == managedByLabelKey || labelKey == workloadIDLabelKey {
+	if labelKey == managedByLabelKey || labelKey == workloadManagedByLabelKey || labelKey == workloadIDLabelKey {
 		return fmt.Errorf("reserved label key %q", labelKey)
 	}
 	if errs := validation.IsQualifiedName(labelKey); len(errs) > 0 {
