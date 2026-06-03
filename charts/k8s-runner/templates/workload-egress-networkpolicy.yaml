@@ -1,0 +1,38 @@
+{{- if .Values.workloadEgressNetworkPolicy.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Values.workloadEgressNetworkPolicy.name | quote }}
+  namespace: {{ default .Release.Namespace .Values.workloadNamespace | quote }}
+  labels:
+    {{- include "service-base.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- toYaml .Values.workloadEgressNetworkPolicy.podSelectorLabels | nindent 6 }}
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - ipBlock:
+            cidr: {{ .Values.workloadEgressNetworkPolicy.openZitiCIDR | quote }}
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              {{- toYaml .Values.workloadEgressNetworkPolicy.dns.namespaceSelector | nindent 14 }}
+          podSelector:
+            matchLabels:
+              {{- toYaml .Values.workloadEgressNetworkPolicy.dns.podSelector | nindent 14 }}
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    - to:
+        - ipBlock:
+            cidr: {{ .Values.workloadEgressNetworkPolicy.publicInternetCIDR | quote }}
+            {{- with .Values.workloadEgressNetworkPolicy.blockedCIDRs }}
+            except:
+              {{- toYaml . | nindent 14 }}
+            {{- end }}
+{{- end }}

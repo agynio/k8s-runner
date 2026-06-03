@@ -103,7 +103,7 @@ func TestBuildContainersMapsMainSpec(t *testing.T) {
 		},
 	}
 
-	containers, initContainers, sidecars, err := buildContainers(req, nil)
+	containers, initContainers, sidecars, err := buildContainers(req, nil, nil)
 	if err != nil {
 		t.Fatalf("buildContainers returned error: %v", err)
 	}
@@ -137,7 +137,7 @@ func TestBuildContainerMapsRequiredCapabilities(t *testing.T) {
 		Name:                 "main",
 		Image:                "busybox",
 		RequiredCapabilities: []string{"NET_ADMIN"},
-	}, "main", map[string]struct{}{})
+	}, "main", map[string]struct{}{}, nil)
 	if err != nil {
 		t.Fatalf("buildContainer returned error: %v", err)
 	}
@@ -154,7 +154,7 @@ func TestBuildContainerOmitsSecurityContextWithoutRequiredCapabilities(t *testin
 	container, err := buildContainer(&runnerv1.ContainerSpec{
 		Name:  "main",
 		Image: "busybox",
-	}, "main", map[string]struct{}{})
+	}, "main", map[string]struct{}{}, nil)
 	if err != nil {
 		t.Fatalf("buildContainer returned error: %v", err)
 	}
@@ -166,7 +166,7 @@ func TestBuildContainerOmitsSecurityContextWithoutRequiredCapabilities(t *testin
 		Name:                 "main",
 		Image:                "busybox",
 		RequiredCapabilities: []string{},
-	}, "main", map[string]struct{}{})
+	}, "main", map[string]struct{}{}, nil)
 	if err != nil {
 		t.Fatalf("buildContainer returned error: %v", err)
 	}
@@ -180,7 +180,7 @@ func TestBuildContainerOmitsSecurityContextForWhitespaceCapabilities(t *testing.
 		Name:                 "main",
 		Image:                "busybox",
 		RequiredCapabilities: []string{" ", ""},
-	}, "main", map[string]struct{}{})
+	}, "main", map[string]struct{}{}, nil)
 	if err != nil {
 		t.Fatalf("buildContainer returned error: %v", err)
 	}
@@ -197,7 +197,7 @@ func TestBuildContainersRejectsDuplicateNames(t *testing.T) {
 		},
 	}
 
-	_, _, _, err := buildContainers(req, nil)
+	_, _, _, err := buildContainers(req, nil, nil)
 	if err == nil {
 		t.Fatalf("expected duplicate container error")
 	}
@@ -215,7 +215,7 @@ func TestBuildContainersRejectsEntrypointWithSpaces(t *testing.T) {
 		Main: &runnerv1.ContainerSpec{Name: "main", Image: "busybox", Entrypoint: "/bin/sh -c"},
 	}
 
-	_, _, _, err := buildContainers(req, nil)
+	_, _, _, err := buildContainers(req, nil, nil)
 	if err == nil {
 		t.Fatalf("expected entrypoint validation error")
 	}
@@ -236,7 +236,7 @@ func TestBuildContainersMapsInitRestartPolicy(t *testing.T) {
 		},
 	}
 
-	_, initContainers, _, err := buildContainers(req, nil)
+	_, initContainers, _, err := buildContainers(req, nil, nil)
 	if err != nil {
 		t.Fatalf("buildContainers returned error: %v", err)
 	}
@@ -259,7 +259,7 @@ func TestBuildContainersOmitsInitRestartPolicy(t *testing.T) {
 		},
 	}
 
-	_, initContainers, _, err := buildContainers(req, nil)
+	_, initContainers, _, err := buildContainers(req, nil, nil)
 	if err != nil {
 		t.Fatalf("buildContainers returned error: %v", err)
 	}
@@ -279,7 +279,7 @@ func TestBuildContainersRejectsInitDuplicateNameWithMain(t *testing.T) {
 		},
 	}
 
-	_, _, _, err := buildContainers(req, nil)
+	_, _, _, err := buildContainers(req, nil, nil)
 	if err == nil {
 		t.Fatalf("expected duplicate container error")
 	}
@@ -301,7 +301,7 @@ func TestBuildContainersRejectsInitDuplicateNames(t *testing.T) {
 		},
 	}
 
-	_, _, _, err := buildContainers(req, nil)
+	_, _, _, err := buildContainers(req, nil, nil)
 	if err == nil {
 		t.Fatalf("expected duplicate container error")
 	}
@@ -1534,4 +1534,142 @@ func assertSidecarInstance(t *testing.T, sidecars []*runnerv1.SidecarInstance, n
 		}
 	}
 	t.Fatalf("expected sidecar instance %s", name)
+}
+
+func TestStartWorkloadMountsInlineFiles(t *testing.T) {
+	clientset := fake.NewSimpleClientset()
+	server := New(Options{
+		Clientset:   clientset,
+		Namespace:   "default",
+		StorageSize: "1Gi",
+		Logger:      zap.NewNop(),
+	})
+
+	ctx := context.Background()
+	req := &runnerv1.StartWorkloadRequest{
+		Main: &runnerv1.ContainerSpec{
+			Name:             "main",
+			Image:            "busybox",
+			InlineFileMounts: []*runnerv1.InlineFileMount{{Path: "/etc/agyn/egress-ca/ca.crt"}},
+		},
+		Sidecars: []*runnerv1.ContainerSpec{{
+			Name:             "sidecar",
+			Image:            "busybox",
+			InlineFileMounts: []*runnerv1.InlineFileMount{{Path: "/etc/agyn/egress-ca/ca.crt"}},
+		}},
+		InlineFiles: map[string][]byte{
+			"/etc/agyn/egress-ca/ca.crt": []byte("cert"),
+		},
+	}
+
+	resp, err := server.StartWorkload(ctx, req)
+	if err != nil {
+		t.Fatalf("StartWorkload returned error: %v", err)
+	}
+
+	pod, err := clientset.CoreV1().Pods("default").Get(ctx, podNameFromID(resp.Id), metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("expected pod created: %v", err)
+	}
+	secretName := fmt.Sprintf("workload-%s-inline-files", resp.Id)
+	if pod.Annotations[secretAnnotationKey] != secretName {
+		t.Fatalf("expected inline secret annotation %q, got %q", secretName, pod.Annotations[secretAnnotationKey])
+	}
+	volume := findPodVolume(pod, inlineFilesVolumeName)
+	if volume == nil || volume.Secret == nil || volume.Secret.SecretName != secretName {
+		t.Fatalf("expected inline files secret volume")
+	}
+	assertInlineVolumeMount(t, pod.Spec.Containers[0], "/etc/agyn/egress-ca/ca.crt")
+	assertInlineVolumeMount(t, pod.Spec.Containers[1], "/etc/agyn/egress-ca/ca.crt")
+
+	secret, err := clientset.CoreV1().Secrets("default").Get(ctx, secretName, metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("expected inline secret: %v", err)
+	}
+	if string(secret.Data["inline-file-0"]) != "cert" {
+		t.Fatalf("expected inline file secret data")
+	}
+}
+
+func TestStartWorkloadRejectsInvalidInlineFiles(t *testing.T) {
+	tests := []struct {
+		name string
+		req  *runnerv1.StartWorkloadRequest
+		want string
+	}{
+		{
+			name: "mount without file",
+			req: &runnerv1.StartWorkloadRequest{Main: &runnerv1.ContainerSpec{
+				Name: "main", Image: "busybox", InlineFileMounts: []*runnerv1.InlineFileMount{{Path: "/file"}},
+			}},
+			want: "inline_file_not_defined",
+		},
+		{
+			name: "unreferenced file",
+			req: &runnerv1.StartWorkloadRequest{
+				Main:        &runnerv1.ContainerSpec{Name: "main", Image: "busybox"},
+				InlineFiles: map[string][]byte{"/file": []byte("data")},
+			},
+			want: "inline_file_not_referenced",
+		},
+		{
+			name: "non absolute file",
+			req: &runnerv1.StartWorkloadRequest{
+				Main:        &runnerv1.ContainerSpec{Name: "main", Image: "busybox"},
+				InlineFiles: map[string][]byte{"file": []byte("data")},
+			},
+			want: "inline_file_path_invalid",
+		},
+		{
+			name: "unclean mount",
+			req: &runnerv1.StartWorkloadRequest{
+				Main:        &runnerv1.ContainerSpec{Name: "main", Image: "busybox", InlineFileMounts: []*runnerv1.InlineFileMount{{Path: "/dir/../file"}}},
+				InlineFiles: map[string][]byte{"/file": []byte("data")},
+			},
+			want: "inline_file_path_invalid",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			clientset := fake.NewSimpleClientset()
+			server := New(Options{Clientset: clientset, Namespace: "default", StorageSize: "1Gi", Logger: zap.NewNop()})
+			_, err := server.StartWorkload(context.Background(), tt.req)
+			if err == nil {
+				t.Fatalf("expected error")
+			}
+			st, ok := status.FromError(err)
+			if !ok || st.Code() != codes.InvalidArgument {
+				t.Fatalf("expected invalid argument, got %v", err)
+			}
+			if !strings.Contains(st.Message(), tt.want) {
+				t.Fatalf("expected %q in error, got %q", tt.want, st.Message())
+			}
+		})
+	}
+}
+
+func findPodVolume(pod *corev1.Pod, name string) *corev1.Volume {
+	for idx := range pod.Spec.Volumes {
+		if pod.Spec.Volumes[idx].Name == name {
+			return &pod.Spec.Volumes[idx]
+		}
+	}
+	return nil
+}
+
+func assertInlineVolumeMount(t *testing.T, container corev1.Container, mountPath string) {
+	t.Helper()
+	for _, mount := range container.VolumeMounts {
+		if mount.Name == inlineFilesVolumeName && mount.MountPath == mountPath {
+			if mount.SubPath == "" {
+				t.Fatalf("expected inline file subPath")
+			}
+			if !mount.ReadOnly {
+				t.Fatalf("expected inline file read-only mount")
+			}
+			return
+		}
+	}
+	t.Fatalf("container %s missing inline mount %s", container.Name, mountPath)
 }

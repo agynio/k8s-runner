@@ -186,3 +186,19 @@ metrics:
         path: /metrics
         interval: ""
         scrapeTimeout: ""
+
+workloadNamespace: agyn-workloads
+
+workloadEgressNetworkPolicy:
+  enabled: false
+  name: agent-workload-egress
+  podSelectorLabels:
+    agyn.dev/managed-by: agents-orchestrator
+  openZitiCIDR: 100.64.0.0/10
+  dns:
+    namespaceSelector:
+      kubernetes.io/metadata.name: kube-system
+    podSelector:
+      k8s-app: kube-dns
+  publicInternetCIDR: 0.0.0.0/0
+  blockedCIDRs: []

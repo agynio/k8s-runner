@@ -20,6 +20,7 @@ const (
 	volumeKeyLabelKey      = "volume_key"
 	pvcAnnotationKey       = "agyn.io/pvc-names"
 	secretAnnotationKey    = "agyn.io/pull-secret-names"
+	inlineFilesVolumeName  = "inline-files"
 	touchedAtAnnotationKey = "agyn.io/touched-at"
 )
 
