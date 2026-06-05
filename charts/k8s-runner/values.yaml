@@ -52,7 +52,7 @@ podAnnotations: {}
 podLabels: {}
 
 podSecurityContext:
-  enabled: false
+  enabled: true
   fsGroup: null
 
 securityContext:
@@ -190,7 +190,7 @@ metrics:
 workloadNamespace: agyn-workloads
 
 workloadEgressNetworkPolicy:
-  enabled: false
+  enabled: true
   name: agent-workload-egress
   podSelectorLabels:
     agyn.dev/managed-by: agents-orchestrator
@@ -201,4 +201,9 @@ workloadEgressNetworkPolicy:
     podSelector:
       k8s-app: kube-dns
   publicInternetCIDR: 0.0.0.0/0
-  blockedCIDRs: []
+  blockedCIDRs:
+    - 10.0.0.0/8
+    - 172.16.0.0/12
+    - 192.168.0.0/16
+    - 169.254.0.0/16
+    - 127.0.0.0/8

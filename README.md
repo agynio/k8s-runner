@@ -77,3 +77,12 @@ any additional internal CIDRs in that list.
 
 The runner runtime does not create or update NetworkPolicy resources, and its
 ServiceAccount does not need `networkpolicies` RBAC.
+
+## Workload egress NetworkPolicy
+
+The chart installs `agent-workload-egress` by default in the workload namespace.
+It selects pods labeled `agyn.dev/managed-by: agents-orchestrator`, allows DNS,
+allows the OpenZiti tunnel CIDR (`100.64.0.0/10`), and allows public internet
+egress while excluding private, link-local, and loopback CIDRs. Override
+`workloadEgressNetworkPolicy.blockedCIDRs` to include cluster Pod/Service CIDRs
+or other operator-declared internal ranges for a production cluster.
