@@ -201,9 +201,18 @@ workloadEgressNetworkPolicy:
     podSelector:
       k8s-app: kube-dns
   publicInternetCIDR: 0.0.0.0/0
-  blockedCIDRs:
+  # Explicit cluster Pod CIDR to exclude from workload public-internet egress.
+  clusterPodCIDR: ""
+  # Explicit cluster Service CIDR to exclude from workload public-internet egress.
+  clusterServiceCIDR: ""
+  # Additional operator-declared internal CIDRs to exclude from workload public-internet egress.
+  additionalInternalCIDRs:
     - 10.0.0.0/8
     - 172.16.0.0/12
     - 192.168.0.0/16
     - 169.254.0.0/16
     - 127.0.0.0/8
+  # Deprecated compatibility alias. Prefer clusterPodCIDR, clusterServiceCIDR,
+  # and additionalInternalCIDRs.
+  blockedCIDRs:
+    []

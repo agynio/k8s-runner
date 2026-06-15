@@ -70,10 +70,11 @@ The Helm chart can install the static egress NetworkPolicy used by egress v1.
 Enable `workloadEgressNetworkPolicy.enabled` and set `workloadNamespace` to the
 namespace where runner-created workload pods run. The policy selects workload
 pods with `agyn.dev/managed-by=agents-orchestrator`, allows OpenZiti synthetic
-addresses (`100.64.0.0/10`), cluster DNS, and public internet, and excludes the
-CIDRs listed in `workloadEgressNetworkPolicy.blockedCIDRs` from public internet
-egress. Operators should include the cluster pod CIDR, cluster service CIDR, and
-any additional internal CIDRs in that list.
+addresses (`100.64.0.0/10`), cluster DNS, and public internet, and excludes
+`workloadEgressNetworkPolicy.clusterPodCIDR`,
+`workloadEgressNetworkPolicy.clusterServiceCIDR`, and
+`workloadEgressNetworkPolicy.additionalInternalCIDRs` from public internet
+egress. `blockedCIDRs` remains as a deprecated compatibility alias.
 
 The runner runtime does not create or update NetworkPolicy resources, and its
 ServiceAccount does not need `networkpolicies` RBAC.
@@ -83,6 +84,7 @@ ServiceAccount does not need `networkpolicies` RBAC.
 The chart installs `agent-workload-egress` by default in the workload namespace.
 It selects pods labeled `agyn.dev/managed-by: agents-orchestrator`, allows DNS,
 allows the OpenZiti tunnel CIDR (`100.64.0.0/10`), and allows public internet
-egress while excluding private, link-local, and loopback CIDRs. Override
-`workloadEgressNetworkPolicy.blockedCIDRs` to include cluster Pod/Service CIDRs
-or other operator-declared internal ranges for a production cluster.
+egress while excluding configured cluster and internal CIDRs. Set
+`workloadEgressNetworkPolicy.clusterPodCIDR`,
+`workloadEgressNetworkPolicy.clusterServiceCIDR`, and
+`workloadEgressNetworkPolicy.additionalInternalCIDRs` for a production cluster.
