@@ -76,15 +76,25 @@ addresses (`100.64.0.0/10`), cluster DNS, and public internet, and excludes
 `workloadEgressNetworkPolicy.additionalInternalCIDRs` from public internet
 egress. `blockedCIDRs` remains as a deprecated compatibility alias.
 
+Ziti enrollment egress is configured with first-class chart values. Enable
+`zitiWorkloadDNS` to allow workload pods to reach the Ziti workload DNS pods on
+TCP/UDP 53. Enable `zitiControllerEnrollment` and set `cidr` to the
+`ziti-controller-client` ClusterIP as a `/32` so init containers can verify and
+enroll JWTs against the Ziti controller before the sidecar DNS path is running:
+
+```yaml
+workloadEgressNetworkPolicy:
+  zitiWorkloadDNS:
+    enabled: true
+  zitiControllerEnrollment:
+    enabled: true
+    cidr: "10.43.245.186/32"
+    port: 2496
+```
+
+Bootstrap should derive `zitiControllerEnrollment.cidr` from the live
+`ziti-controller-client` ClusterIP and set `port` to the configured controller
+client port.
+
 The runner runtime does not create or update NetworkPolicy resources, and its
 ServiceAccount does not need `networkpolicies` RBAC.
-
-## Workload egress NetworkPolicy
-
-The chart installs `agent-workload-egress` by default in the workload namespace.
-It selects pods labeled `agyn.dev/managed-by: agents-orchestrator`, allows DNS,
-allows the OpenZiti tunnel CIDR (`100.64.0.0/10`), and allows public internet
-egress while excluding configured cluster and internal CIDRs. Set
-`workloadEgressNetworkPolicy.clusterPodCIDR`,
-`workloadEgressNetworkPolicy.clusterServiceCIDR`, and
-`workloadEgressNetworkPolicy.additionalInternalCIDRs` for a production cluster.

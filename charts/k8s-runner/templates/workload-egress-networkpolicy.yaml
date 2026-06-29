@@ -41,6 +41,28 @@ spec:
           port: 53
         - protocol: TCP
           port: 53
+    {{- if .Values.workloadEgressNetworkPolicy.zitiWorkloadDNS.enabled }}
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              {{- toYaml .Values.workloadEgressNetworkPolicy.zitiWorkloadDNS.namespaceSelector | nindent 14 }}
+          podSelector:
+            matchLabels:
+              {{- toYaml .Values.workloadEgressNetworkPolicy.zitiWorkloadDNS.podSelector | nindent 14 }}
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    {{- end }}
+    {{- if .Values.workloadEgressNetworkPolicy.zitiControllerEnrollment.enabled }}
+    - to:
+        - ipBlock:
+            cidr: {{ required "workloadEgressNetworkPolicy.zitiControllerEnrollment.cidr is required when zitiControllerEnrollment is enabled" .Values.workloadEgressNetworkPolicy.zitiControllerEnrollment.cidr | quote }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.workloadEgressNetworkPolicy.zitiControllerEnrollment.port }}
+    {{- end }}
     - to:
         - ipBlock:
             cidr: {{ .Values.workloadEgressNetworkPolicy.publicInternetCIDR | quote }}
