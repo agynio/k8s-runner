@@ -1,71 +1,79 @@
 {{- if .Values.workloadEgressNetworkPolicy.enabled }}
+{{- $policy := .Values.workloadEgressNetworkPolicy -}}
 {{- $excludedCIDRs := list -}}
-{{- with .Values.workloadEgressNetworkPolicy.clusterPodCIDR }}
+{{- with $policy.clusterPodCIDR }}
 {{- $excludedCIDRs = append $excludedCIDRs . -}}
 {{- end }}
-{{- with .Values.workloadEgressNetworkPolicy.clusterServiceCIDR }}
+{{- with $policy.clusterServiceCIDR }}
 {{- $excludedCIDRs = append $excludedCIDRs . -}}
 {{- end }}
-{{- range .Values.workloadEgressNetworkPolicy.additionalInternalCIDRs }}
+{{- range $policy.additionalInternalCIDRs }}
 {{- $excludedCIDRs = append $excludedCIDRs . -}}
 {{- end }}
-{{- range .Values.workloadEgressNetworkPolicy.blockedCIDRs }}
+{{- range $policy.blockedCIDRs }}
 {{- $excludedCIDRs = append $excludedCIDRs . -}}
+{{- end }}
+{{- $zitiUnderlayEndpoints := list -}}
+{{- range $policy.zitiUnderlay.endpoints }}
+{{- $zitiUnderlayEndpoints = append $zitiUnderlayEndpoints . -}}
+{{- end }}
+{{- if $policy.zitiControllerEnrollment.enabled }}
+{{- $zitiUnderlayEndpoints = append $zitiUnderlayEndpoints (dict "name" "zitiControllerEnrollment" "cidr" $policy.zitiControllerEnrollment.cidr "port" $policy.zitiControllerEnrollment.port) -}}
 {{- end }}
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: {{ .Values.workloadEgressNetworkPolicy.name | quote }}
+  name: {{ $policy.name | quote }}
   namespace: {{ default .Release.Namespace .Values.workloadNamespace | quote }}
   labels:
     {{- include "service-base.labels" . | nindent 4 }}
 spec:
   podSelector:
     matchLabels:
-      {{- toYaml .Values.workloadEgressNetworkPolicy.podSelectorLabels | nindent 6 }}
+      {{- toYaml $policy.podSelectorLabels | nindent 6 }}
   policyTypes:
     - Egress
   egress:
     - to:
         - ipBlock:
-            cidr: {{ .Values.workloadEgressNetworkPolicy.openZitiCIDR | quote }}
+            cidr: {{ $policy.openZitiCIDR | quote }}
     - to:
         - namespaceSelector:
             matchLabels:
-              {{- toYaml .Values.workloadEgressNetworkPolicy.dns.namespaceSelector | nindent 14 }}
+              {{- toYaml $policy.dns.namespaceSelector | nindent 14 }}
           podSelector:
             matchLabels:
-              {{- toYaml .Values.workloadEgressNetworkPolicy.dns.podSelector | nindent 14 }}
+              {{- toYaml $policy.dns.podSelector | nindent 14 }}
       ports:
         - protocol: UDP
           port: 53
         - protocol: TCP
           port: 53
-    {{- if .Values.workloadEgressNetworkPolicy.zitiWorkloadDNS.enabled }}
+    {{- if $policy.zitiWorkloadDNS.enabled }}
     - to:
         - namespaceSelector:
             matchLabels:
-              {{- toYaml .Values.workloadEgressNetworkPolicy.zitiWorkloadDNS.namespaceSelector | nindent 14 }}
+              {{- toYaml $policy.zitiWorkloadDNS.namespaceSelector | nindent 14 }}
           podSelector:
             matchLabels:
-              {{- toYaml .Values.workloadEgressNetworkPolicy.zitiWorkloadDNS.podSelector | nindent 14 }}
+              {{- toYaml $policy.zitiWorkloadDNS.podSelector | nindent 14 }}
       ports:
         - protocol: UDP
           port: 53
         - protocol: TCP
           port: 53
     {{- end }}
-    {{- if .Values.workloadEgressNetworkPolicy.zitiControllerEnrollment.enabled }}
+    {{- range $endpoint := $zitiUnderlayEndpoints }}
     - to:
         - ipBlock:
-            cidr: {{ required "workloadEgressNetworkPolicy.zitiControllerEnrollment.cidr is required when zitiControllerEnrollment is enabled" .Values.workloadEgressNetworkPolicy.zitiControllerEnrollment.cidr | quote }}
+            cidr: {{ required (printf "workloadEgressNetworkPolicy.zitiUnderlay.endpoints[%s].cidr is required" (default "unnamed" $endpoint.name)) $endpoint.cidr | quote }}
       ports:
         - protocol: TCP
-          port: {{ .Values.workloadEgressNetworkPolicy.zitiControllerEnrollment.port }}
+          port: {{ required (printf "workloadEgressNetworkPolicy.zitiUnderlay.endpoints[%s].port is required" (default "unnamed" $endpoint.name)) $endpoint.port }}
     {{- end }}
     - to:
         - ipBlock:
-            cidr: {{ .Values.workloadEgressNetworkPolicy.publicInternetCIDR | quote }}
+            cidr: {{ $policy.publicInternetCIDR | quote }}
             {{- with $excludedCIDRs }}
             except:
               {{- toYaml . | nindent 14 }}

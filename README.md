@@ -76,25 +76,32 @@ addresses (`100.64.0.0/10`), cluster DNS, and public internet, and excludes
 `workloadEgressNetworkPolicy.additionalInternalCIDRs` from public internet
 egress. `blockedCIDRs` remains as a deprecated compatibility alias.
 
-Ziti enrollment egress is configured with first-class chart values. Enable
+Ziti underlay egress is configured with first-class chart values. Enable
 `zitiWorkloadDNS` to allow workload pods to reach the Ziti workload DNS pods on
-TCP/UDP 53. Enable `zitiControllerEnrollment` and set `cidr` to the
-`ziti-controller-client` ClusterIP as a `/32` so init containers can verify and
-enroll JWTs against the Ziti controller before the sidecar DNS path is running:
+TCP/UDP 53. Configure `zitiUnderlay.endpoints` with explicit service ClusterIP
+`/32` rules for the controller and router underlay endpoints returned by
+`ziti-workload-dns`. This keeps `.ziti` application traffic on the overlay while
+allowing only the underlay endpoints required for sidecar startup:
 
 ```yaml
 workloadEgressNetworkPolicy:
   zitiWorkloadDNS:
     enabled: true
-  zitiControllerEnrollment:
-    enabled: true
-    cidr: "10.43.245.186/32"
-    port: 2496
+  zitiUnderlay:
+    endpoints:
+      - name: controller
+        cidr: "10.43.245.186/32"
+        port: 2496
+      - name: router
+        cidr: "10.43.245.187/32"
+        port: 2496
 ```
 
-Bootstrap should derive `zitiControllerEnrollment.cidr` from the live
-`ziti-controller-client` ClusterIP and set `port` to the configured controller
-client port.
+Bootstrap should derive the controller and router underlay endpoint CIDRs from
+the live `ziti-controller-client` and `ziti-router-edge` ClusterIPs and set
+ports to the configured OpenZiti underlay ports. The deprecated
+`zitiControllerEnrollment` value remains for enrollment-only compatibility, but
+new bootstrap config should use `zitiUnderlay.endpoints`.
 
 The runner runtime does not create or update NetworkPolicy resources, and its
 ServiceAccount does not need `networkpolicies` RBAC.
