@@ -211,12 +211,18 @@ workloadEgressNetworkPolicy:
     # Example:
     # - name: controller
     #   cidr: ""
+    #   namespaceSelector: {}
+    #   podSelector: {}
     #   port: 2496
     # - name: ingress-gateway
     #   cidr: ""
+    #   namespaceSelector: {}
+    #   podSelector: {}
     #   port: 443
     # - name: router
     #   cidr: ""
+    #   namespaceSelector: {}
+    #   podSelector: {}
     #   port: 2496
   # Deprecated compatibility alias. Prefer zitiUnderlay.endpoints.
   zitiControllerEnrollment:

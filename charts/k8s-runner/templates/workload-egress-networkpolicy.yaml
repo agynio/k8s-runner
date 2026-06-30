@@ -67,9 +67,26 @@ spec:
           port: 53
     {{- end }}
     {{- range $endpoint := $zitiUnderlayEndpoints }}
+    {{- if not (or $endpoint.cidr $endpoint.namespaceSelector $endpoint.podSelector) }}
+    {{- required (printf "workloadEgressNetworkPolicy.zitiUnderlay.endpoints[%s].cidr or selectors are required" (default "unnamed" $endpoint.name)) "" }}
+    {{- end }}
     - to:
+        {{- if $endpoint.cidr }}
         - ipBlock:
-            cidr: {{ required (printf "workloadEgressNetworkPolicy.zitiUnderlay.endpoints[%s].cidr is required" (default "unnamed" $endpoint.name)) $endpoint.cidr | quote }}
+            cidr: {{ $endpoint.cidr | quote }}
+        {{- end }}
+        {{- if or $endpoint.namespaceSelector $endpoint.podSelector }}
+        - {{- with $endpoint.namespaceSelector }}
+          namespaceSelector:
+            matchLabels:
+              {{- toYaml . | nindent 14 }}
+          {{- end }}
+          {{- with $endpoint.podSelector }}
+          podSelector:
+            matchLabels:
+              {{- toYaml . | nindent 14 }}
+          {{- end }}
+        {{- end }}
       ports:
         - protocol: TCP
           port: {{ required (printf "workloadEgressNetworkPolicy.zitiUnderlay.endpoints[%s].port is required" (default "unnamed" $endpoint.name)) $endpoint.port }}

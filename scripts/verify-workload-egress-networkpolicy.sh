@@ -3,8 +3,9 @@ set -euo pipefail
 
 chart_dir="charts/k8s-runner"
 rendered="$(mktemp)"
+values_file="$(mktemp)"
 error_log="$(mktemp)"
-trap 'rm -f "$rendered" "$error_log"' EXIT
+trap 'rm -f "$rendered" "$values_file" "$error_log"' EXIT
 
 helm dependency build "$chart_dir" >/dev/null
 helm lint "$chart_dir" >/dev/null
@@ -56,6 +57,44 @@ assert_contains 'port: 443'
 assert_contains 'cidr: "0.0.0.0/0"'
 assert_not_contains '10.0.0.0/8/32'
 
+cat >"$values_file" <<'VALUES'
+workloadNamespace: agyn-workloads
+workloadEgressNetworkPolicy:
+  enabled: true
+  zitiUnderlay:
+    endpoints:
+      - name: ingress-gateway
+        cidr: 10.43.245.188/32
+        namespaceSelector:
+          kubernetes.io/metadata.name: istio-system
+        podSelector:
+          istio: ingressgateway
+        port: 443
+VALUES
+
+helm template k8s-runner "$chart_dir" \
+  -f "$values_file" \
+  >"$rendered"
+assert_contains 'cidr: "10.43.245.188/32"'
+assert_contains 'kubernetes.io/metadata.name: istio-system'
+assert_contains 'istio: ingressgateway'
+assert_contains 'port: 443'
+
+helm template k8s-runner "$chart_dir" \
+  --set workloadNamespace=agyn-workloads \
+  --set workloadEgressNetworkPolicy.enabled=true \
+  --set workloadEgressNetworkPolicy.zitiWorkloadDNS.enabled=true \
+  --set workloadEgressNetworkPolicy.zitiUnderlay.endpoints[0].name=controller \
+  --set workloadEgressNetworkPolicy.zitiUnderlay.endpoints[0].cidr=10.43.245.186/32 \
+  --set workloadEgressNetworkPolicy.zitiUnderlay.endpoints[0].port=2496 \
+  --set workloadEgressNetworkPolicy.zitiUnderlay.endpoints[1].name=router \
+  --set workloadEgressNetworkPolicy.zitiUnderlay.endpoints[1].cidr=10.43.245.187/32 \
+  --set workloadEgressNetworkPolicy.zitiUnderlay.endpoints[1].port=2496 \
+  --set workloadEgressNetworkPolicy.zitiUnderlay.endpoints[2].name=ingress-gateway \
+  --set workloadEgressNetworkPolicy.zitiUnderlay.endpoints[2].cidr=10.43.245.188/32 \
+  --set workloadEgressNetworkPolicy.zitiUnderlay.endpoints[2].port=443 \
+  >"$rendered"
+
 udp_53_count="$(grep -F 'protocol: UDP' -A1 "$rendered" | grep -F 'port: 53' | wc -l | tr -d ' ')"
 tcp_53_count="$(grep -F 'protocol: TCP' -A1 "$rendered" | grep -F 'port: 53' | wc -l | tr -d ' ')"
 if [[ "$udp_53_count" -lt 2 || "$tcp_53_count" -lt 2 ]]; then
@@ -98,7 +137,7 @@ if helm template k8s-runner "$chart_dir" \
   exit 1
 fi
 
-if ! grep -Fq 'workloadEgressNetworkPolicy.zitiUnderlay.endpoints[controller].cidr is required' "$error_log"; then
+if ! grep -Fq 'workloadEgressNetworkPolicy.zitiUnderlay.endpoints[controller].cidr or selectors are required' "$error_log"; then
   echo "expected missing underlay endpoint CIDR validation error" >&2
   cat "$error_log" >&2
   exit 1
@@ -111,7 +150,7 @@ if helm template k8s-runner "$chart_dir" \
   exit 1
 fi
 
-if ! grep -Fq 'workloadEgressNetworkPolicy.zitiUnderlay.endpoints[zitiControllerEnrollment].cidr is required' "$error_log"; then
+if ! grep -Fq 'workloadEgressNetworkPolicy.zitiUnderlay.endpoints[zitiControllerEnrollment].cidr or selectors are required' "$error_log"; then
   echo "expected missing deprecated controller CIDR validation error" >&2
   cat "$error_log" >&2
   exit 1
@@ -124,7 +163,7 @@ if helm template k8s-runner "$chart_dir" \
   exit 1
 fi
 
-if ! grep -Fq 'workloadEgressNetworkPolicy.zitiUnderlay.endpoints[zitiRuntimeIngressGateway].cidr is required' "$error_log"; then
+if ! grep -Fq 'workloadEgressNetworkPolicy.zitiUnderlay.endpoints[zitiRuntimeIngressGateway].cidr or selectors are required' "$error_log"; then
   echo "expected missing runtime ingress gateway CIDR validation error" >&2
   cat "$error_log" >&2
   exit 1
