@@ -212,6 +212,9 @@ workloadEgressNetworkPolicy:
     # - name: controller
     #   cidr: ""
     #   port: 2496
+    # - name: ingress-gateway
+    #   cidr: ""
+    #   port: 443
     # - name: router
     #   cidr: ""
     #   port: 2496
@@ -220,6 +223,10 @@ workloadEgressNetworkPolicy:
     enabled: false
     cidr: ""
     port: 2496
+  zitiRuntimeIngressGateway:
+    enabled: false
+    cidr: ""
+    port: 443
   publicInternetCIDR: 0.0.0.0/0
   # Explicit cluster Pod CIDR to exclude from workload public-internet egress.
   clusterPodCIDR: ""

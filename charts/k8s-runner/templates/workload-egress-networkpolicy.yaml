@@ -20,6 +20,9 @@
 {{- if $policy.zitiControllerEnrollment.enabled }}
 {{- $zitiUnderlayEndpoints = append $zitiUnderlayEndpoints (dict "name" "zitiControllerEnrollment" "cidr" $policy.zitiControllerEnrollment.cidr "port" $policy.zitiControllerEnrollment.port) -}}
 {{- end }}
+{{- if $policy.zitiRuntimeIngressGateway.enabled }}
+{{- $zitiUnderlayEndpoints = append $zitiUnderlayEndpoints (dict "name" "zitiRuntimeIngressGateway" "cidr" $policy.zitiRuntimeIngressGateway.cidr "port" $policy.zitiRuntimeIngressGateway.port) -}}
+{{- end }}
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:

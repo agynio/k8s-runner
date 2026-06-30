@@ -19,6 +19,9 @@ helm template k8s-runner "$chart_dir" \
   --set workloadEgressNetworkPolicy.zitiUnderlay.endpoints[1].name=router \
   --set workloadEgressNetworkPolicy.zitiUnderlay.endpoints[1].cidr=10.43.245.187/32 \
   --set workloadEgressNetworkPolicy.zitiUnderlay.endpoints[1].port=2496 \
+  --set workloadEgressNetworkPolicy.zitiUnderlay.endpoints[2].name=ingress-gateway \
+  --set workloadEgressNetworkPolicy.zitiUnderlay.endpoints[2].cidr=10.43.245.188/32 \
+  --set workloadEgressNetworkPolicy.zitiUnderlay.endpoints[2].port=443 \
   >"$rendered"
 
 assert_contains() {
@@ -47,7 +50,9 @@ assert_contains 'kubernetes.io/metadata.name: ziti'
 assert_contains 'app.kubernetes.io/name: ziti-workload-dns'
 assert_contains 'cidr: "10.43.245.186/32"'
 assert_contains 'cidr: "10.43.245.187/32"'
+assert_contains 'cidr: "10.43.245.188/32"'
 assert_contains 'port: 2496'
+assert_contains 'port: 443'
 assert_contains 'cidr: "0.0.0.0/0"'
 assert_not_contains '10.0.0.0/8/32'
 
@@ -64,15 +69,26 @@ if [[ "$port_2496_count" -lt 2 ]]; then
   exit 1
 fi
 
+port_443_count="$(grep -F 'port: 443' "$rendered" | wc -l | tr -d ' ')"
+if [[ "$port_443_count" -lt 1 ]]; then
+  echo "expected runtime Istio ingress gateway TCP 443 rule" >&2
+  exit 1
+fi
+
 helm template k8s-runner "$chart_dir" \
   --set workloadNamespace=agyn-workloads \
   --set workloadEgressNetworkPolicy.enabled=true \
   --set workloadEgressNetworkPolicy.zitiControllerEnrollment.enabled=true \
   --set workloadEgressNetworkPolicy.zitiControllerEnrollment.cidr=10.43.245.186/32 \
   --set workloadEgressNetworkPolicy.zitiControllerEnrollment.port=2496 \
+  --set workloadEgressNetworkPolicy.zitiRuntimeIngressGateway.enabled=true \
+  --set workloadEgressNetworkPolicy.zitiRuntimeIngressGateway.cidr=10.43.245.188/32 \
+  --set workloadEgressNetworkPolicy.zitiRuntimeIngressGateway.port=443 \
   >"$rendered"
 assert_contains 'cidr: "10.43.245.186/32"'
 assert_contains 'port: 2496'
+assert_contains 'cidr: "10.43.245.188/32"'
+assert_contains 'port: 443'
 
 if helm template k8s-runner "$chart_dir" \
   --set workloadEgressNetworkPolicy.zitiUnderlay.endpoints[0].name=controller \
@@ -97,6 +113,19 @@ fi
 
 if ! grep -Fq 'workloadEgressNetworkPolicy.zitiUnderlay.endpoints[zitiControllerEnrollment].cidr is required' "$error_log"; then
   echo "expected missing deprecated controller CIDR validation error" >&2
+  cat "$error_log" >&2
+  exit 1
+fi
+
+if helm template k8s-runner "$chart_dir" \
+  --set workloadEgressNetworkPolicy.zitiRuntimeIngressGateway.enabled=true \
+  > /dev/null 2>"$error_log"; then
+  echo "expected helm template to fail when runtime ingress gateway CIDR is missing" >&2
+  exit 1
+fi
+
+if ! grep -Fq 'workloadEgressNetworkPolicy.zitiUnderlay.endpoints[zitiRuntimeIngressGateway].cidr is required' "$error_log"; then
+  echo "expected missing runtime ingress gateway CIDR validation error" >&2
   cat "$error_log" >&2
   exit 1
 fi
