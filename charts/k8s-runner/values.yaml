@@ -233,6 +233,9 @@ workloadEgressNetworkPolicy:
   zitiRuntimeIngressGateway:
     enabled: false
     cidr: ""
+    backendCIDRs: []
+    namespaceSelector: {}
+    podSelector: {}
     port: 443
   publicInternetCIDR: 0.0.0.0/0
   # Explicit cluster Pod CIDR to exclude from workload public-internet egress.

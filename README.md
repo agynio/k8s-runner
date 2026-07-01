@@ -116,11 +116,12 @@ ClusterIPs. For the runtime ingress gateway endpoint, bootstrap should also
 set endpoint pod CIDRs and the Istio ingress gateway namespace/pod selectors
 when available so CNIs can follow endpoint pods instead of only the Service
 ClusterIP. Set the controller and router ports to the configured
-OpenZiti underlay port, and set the runtime ingress gateway port to `443`. The
-deprecated `zitiControllerEnrollment` and `zitiRuntimeIngressGateway` values
-remain as named compatibility helpers for deployments that prefer fixed keys,
-but new bootstrap config should use `zitiUnderlay.endpoints` for the complete
-endpoint set.
+OpenZiti underlay port, and set the runtime ingress gateway port to `443`.
+The deprecated `zitiControllerEnrollment` and `zitiRuntimeIngressGateway` values
+remain as named compatibility helpers for deployments that prefer fixed keys.
+`zitiRuntimeIngressGateway` accepts the same runtime backend CIDR and selector
+fields as `zitiUnderlay.endpoints`, but new bootstrap config should use
+`zitiUnderlay.endpoints` for the complete endpoint set.
 
 The runner runtime does not create or update NetworkPolicy resources, and its
 ServiceAccount does not need `networkpolicies` RBAC.

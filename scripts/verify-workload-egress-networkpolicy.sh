@@ -125,11 +125,17 @@ helm template k8s-runner "$chart_dir" \
   --set workloadEgressNetworkPolicy.zitiControllerEnrollment.port=2496 \
   --set workloadEgressNetworkPolicy.zitiRuntimeIngressGateway.enabled=true \
   --set workloadEgressNetworkPolicy.zitiRuntimeIngressGateway.cidr=10.43.245.188/32 \
+  --set workloadEgressNetworkPolicy.zitiRuntimeIngressGateway.backendCIDRs[0]=10.42.2.4/32 \
+  --set workloadEgressNetworkPolicy.zitiRuntimeIngressGateway.namespaceSelector.kubernetes\\.io/metadata\\.name=istio-system \
+  --set workloadEgressNetworkPolicy.zitiRuntimeIngressGateway.podSelector.istio=ingressgateway \
   --set workloadEgressNetworkPolicy.zitiRuntimeIngressGateway.port=443 \
   >"$rendered"
 assert_contains 'cidr: "10.43.245.186/32"'
 assert_contains 'port: 2496'
 assert_contains 'cidr: "10.43.245.188/32"'
+assert_contains 'cidr: "10.42.2.4/32"'
+assert_contains 'kubernetes.io/metadata.name: istio-system'
+assert_contains 'istio: ingressgateway'
 assert_contains 'port: 443'
 
 if helm template k8s-runner "$chart_dir" \
