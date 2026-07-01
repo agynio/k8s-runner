@@ -65,6 +65,8 @@ workloadEgressNetworkPolicy:
     endpoints:
       - name: ingress-gateway
         cidr: 10.43.245.188/32
+        backendCIDRs:
+          - 10.42.2.4/32
         namespaceSelector:
           kubernetes.io/metadata.name: istio-system
         podSelector:
@@ -76,6 +78,7 @@ helm template k8s-runner "$chart_dir" \
   -f "$values_file" \
   >"$rendered"
 assert_contains 'cidr: "10.43.245.188/32"'
+assert_contains 'cidr: "10.42.2.4/32"'
 assert_contains 'kubernetes.io/metadata.name: istio-system'
 assert_contains 'istio: ingressgateway'
 assert_contains 'port: 443'
@@ -137,7 +140,7 @@ if helm template k8s-runner "$chart_dir" \
   exit 1
 fi
 
-if ! grep -Fq 'workloadEgressNetworkPolicy.zitiUnderlay.endpoints[controller].cidr or selectors are required' "$error_log"; then
+if ! grep -Fq 'workloadEgressNetworkPolicy.zitiUnderlay.endpoints[controller].cidr, backendCIDRs, or selectors are required' "$error_log"; then
   echo "expected missing underlay endpoint CIDR validation error" >&2
   cat "$error_log" >&2
   exit 1
@@ -150,7 +153,7 @@ if helm template k8s-runner "$chart_dir" \
   exit 1
 fi
 
-if ! grep -Fq 'workloadEgressNetworkPolicy.zitiUnderlay.endpoints[zitiControllerEnrollment].cidr or selectors are required' "$error_log"; then
+if ! grep -Fq 'workloadEgressNetworkPolicy.zitiUnderlay.endpoints[zitiControllerEnrollment].cidr, backendCIDRs, or selectors are required' "$error_log"; then
   echo "expected missing deprecated controller CIDR validation error" >&2
   cat "$error_log" >&2
   exit 1
@@ -163,7 +166,7 @@ if helm template k8s-runner "$chart_dir" \
   exit 1
 fi
 
-if ! grep -Fq 'workloadEgressNetworkPolicy.zitiUnderlay.endpoints[zitiRuntimeIngressGateway].cidr or selectors are required' "$error_log"; then
+if ! grep -Fq 'workloadEgressNetworkPolicy.zitiUnderlay.endpoints[zitiRuntimeIngressGateway].cidr, backendCIDRs, or selectors are required' "$error_log"; then
   echo "expected missing runtime ingress gateway CIDR validation error" >&2
   cat "$error_log" >&2
   exit 1

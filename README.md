@@ -81,7 +81,8 @@ Ziti underlay egress is configured with first-class chart values. Enable
 TCP/UDP 53. Configure `zitiUnderlay.endpoints` for the enrollment controller,
 runtime Istio ingress gateway, and router underlay endpoints returned by
 `ziti-workload-dns`. Each endpoint can allow a concrete service ClusterIP `/32`,
-a namespace/pod selector, or both. Runtime `ziti.<base-domain>:443` resolves to
+endpoint/backend pod CIDRs through `backendCIDRs`, a namespace/pod selector,
+or a combination. Runtime `ziti.<base-domain>:443` resolves to
 the Istio ingress gateway so TLS passthrough can route SNI to the controller
 client service. This keeps `.ziti` application traffic on the overlay while
 allowing only the underlay endpoints required for sidecar startup:
@@ -97,6 +98,8 @@ workloadEgressNetworkPolicy:
         port: 2496
       - name: ingress-gateway
         cidr: "10.43.245.188/32"
+        backendCIDRs:
+          - "10.42.2.4/32"
         namespaceSelector:
           kubernetes.io/metadata.name: istio-system
         podSelector:
@@ -109,10 +112,10 @@ workloadEgressNetworkPolicy:
 
 Bootstrap should derive the underlay endpoint CIDRs from the live
 `ziti-controller-client`, `istio-ingressgateway`, and `ziti-router-edge`
-ClusterIPs. For the runtime ingress gateway endpoint, bootstrap should also set
-the Istio ingress gateway namespace selector and pod selector when available so
-CNIs that honor selector-backed egress can follow endpoint pods instead of only
-the Service ClusterIP. Set the controller and router ports to the configured
+ClusterIPs. For the runtime ingress gateway endpoint, bootstrap should also
+set endpoint pod CIDRs and the Istio ingress gateway namespace/pod selectors
+when available so CNIs can follow endpoint pods instead of only the Service
+ClusterIP. Set the controller and router ports to the configured
 OpenZiti underlay port, and set the runtime ingress gateway port to `443`. The
 deprecated `zitiControllerEnrollment` and `zitiRuntimeIngressGateway` values
 remain as named compatibility helpers for deployments that prefer fixed keys,

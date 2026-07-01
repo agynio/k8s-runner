@@ -15,7 +15,11 @@
 {{- end }}
 {{- $zitiUnderlayEndpoints := list -}}
 {{- range $policy.zitiUnderlay.endpoints }}
-{{- $zitiUnderlayEndpoints = append $zitiUnderlayEndpoints . -}}
+{{- $baseEndpoint := . -}}
+{{- $zitiUnderlayEndpoints = append $zitiUnderlayEndpoints $baseEndpoint -}}
+{{- range $cidr := $baseEndpoint.backendCIDRs }}
+{{- $zitiUnderlayEndpoints = append $zitiUnderlayEndpoints (dict "name" (printf "%s-backend" (default "unnamed" $baseEndpoint.name)) "cidr" $cidr "port" $baseEndpoint.port) -}}
+{{- end }}
 {{- end }}
 {{- if $policy.zitiControllerEnrollment.enabled }}
 {{- $zitiUnderlayEndpoints = append $zitiUnderlayEndpoints (dict "name" "zitiControllerEnrollment" "cidr" $policy.zitiControllerEnrollment.cidr "port" $policy.zitiControllerEnrollment.port) -}}
@@ -67,8 +71,8 @@ spec:
           port: 53
     {{- end }}
     {{- range $endpoint := $zitiUnderlayEndpoints }}
-    {{- if not (or $endpoint.cidr $endpoint.namespaceSelector $endpoint.podSelector) }}
-    {{- required (printf "workloadEgressNetworkPolicy.zitiUnderlay.endpoints[%s].cidr or selectors are required" (default "unnamed" $endpoint.name)) "" }}
+    {{- if not (or $endpoint.cidr $endpoint.backendCIDRs $endpoint.namespaceSelector $endpoint.podSelector) }}
+    {{- required (printf "workloadEgressNetworkPolicy.zitiUnderlay.endpoints[%s].cidr, backendCIDRs, or selectors are required" (default "unnamed" $endpoint.name)) "" }}
     {{- end }}
     - to:
         {{- if $endpoint.cidr }}

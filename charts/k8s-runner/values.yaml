@@ -216,6 +216,7 @@ workloadEgressNetworkPolicy:
     #   port: 2496
     # - name: ingress-gateway
     #   cidr: ""
+    #   backendCIDRs: []
     #   namespaceSelector: {}
     #   podSelector: {}
     #   port: 443
