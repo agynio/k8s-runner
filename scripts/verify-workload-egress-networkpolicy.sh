@@ -41,6 +41,18 @@ assert_not_contains() {
   fi
 }
 
+assert_no_empty_to_blocks() {
+  if ! awk '
+    /^    - to:$/ { in_to = 1; has_peer = 0; next }
+    in_to && /^        - / { has_peer = 1; next }
+    in_to && /^      ports:$/ { if (!has_peer) exit 1; in_to = 0 }
+    in_to && /^    - / { if (!has_peer) exit 1; in_to = 0 }
+  ' "$rendered"; then
+    echo "expected every egress to block to contain at least one peer" >&2
+    exit 1
+  fi
+}
+
 assert_contains 'kind: NetworkPolicy'
 assert_contains 'name: "agent-workload-egress"'
 assert_contains 'namespace: "agyn-workloads"'
@@ -82,6 +94,26 @@ assert_contains 'cidr: "10.42.2.4/32"'
 assert_contains 'kubernetes.io/metadata.name: istio-system'
 assert_contains 'istio: ingressgateway'
 assert_contains 'port: 443'
+assert_no_empty_to_blocks
+
+cat >"$values_file" <<'VALUES'
+workloadNamespace: agyn-workloads
+workloadEgressNetworkPolicy:
+  enabled: true
+  zitiUnderlay:
+    endpoints:
+      - name: backend-only
+        backendCIDRs:
+          - 10.42.2.5/32
+        port: 443
+VALUES
+
+helm template k8s-runner "$chart_dir" \
+  -f "$values_file" \
+  >"$rendered"
+assert_contains 'cidr: "10.42.2.5/32"'
+assert_contains 'port: 443'
+assert_no_empty_to_blocks
 
 helm template k8s-runner "$chart_dir" \
   --set workloadNamespace=agyn-workloads \
