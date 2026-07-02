@@ -200,6 +200,43 @@ workloadEgressNetworkPolicy:
       kubernetes.io/metadata.name: kube-system
     podSelector:
       k8s-app: kube-dns
+  zitiWorkloadDNS:
+    enabled: false
+    namespaceSelector:
+      kubernetes.io/metadata.name: ziti
+    podSelector:
+      app.kubernetes.io/name: ziti-workload-dns
+  zitiUnderlay:
+    endpoints: []
+    # Example:
+    # - name: controller
+    #   cidr: ""
+    #   namespaceSelector: {}
+    #   podSelector: {}
+    #   port: 2496
+    # - name: ingress-gateway
+    #   cidr: ""
+    #   backendCIDRs: []
+    #   namespaceSelector: {}
+    #   podSelector: {}
+    #   port: 443
+    # - name: router
+    #   cidr: ""
+    #   namespaceSelector: {}
+    #   podSelector: {}
+    #   port: 2496
+  # Deprecated compatibility alias. Prefer zitiUnderlay.endpoints.
+  zitiControllerEnrollment:
+    enabled: false
+    cidr: ""
+    port: 2496
+  zitiRuntimeIngressGateway:
+    enabled: false
+    cidr: ""
+    backendCIDRs: []
+    namespaceSelector: {}
+    podSelector: {}
+    port: 443
   publicInternetCIDR: 0.0.0.0/0
   # Explicit cluster Pod CIDR to exclude from workload public-internet egress.
   clusterPodCIDR: ""

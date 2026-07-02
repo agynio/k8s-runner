@@ -76,15 +76,52 @@ addresses (`100.64.0.0/10`), cluster DNS, and public internet, and excludes
 `workloadEgressNetworkPolicy.additionalInternalCIDRs` from public internet
 egress. `blockedCIDRs` remains as a deprecated compatibility alias.
 
+Ziti underlay egress is configured with first-class chart values. Enable
+`zitiWorkloadDNS` to allow workload pods to reach the Ziti workload DNS pods on
+TCP/UDP 53. Configure `zitiUnderlay.endpoints` for the enrollment controller,
+runtime Istio ingress gateway, and router underlay endpoints returned by
+`ziti-workload-dns`. Each endpoint can allow a concrete service ClusterIP `/32`,
+endpoint/backend pod CIDRs through `backendCIDRs`, a namespace/pod selector,
+or a combination. Runtime `ziti.<base-domain>:443` resolves to
+the Istio ingress gateway so TLS passthrough can route SNI to the controller
+client service. This keeps `.ziti` application traffic on the overlay while
+allowing only the underlay endpoints required for sidecar startup:
+
+```yaml
+workloadEgressNetworkPolicy:
+  zitiWorkloadDNS:
+    enabled: true
+  zitiUnderlay:
+    endpoints:
+      - name: controller
+        cidr: "10.43.245.186/32"
+        port: 2496
+      - name: ingress-gateway
+        cidr: "10.43.245.188/32"
+        backendCIDRs:
+          - "10.42.2.4/32"
+        namespaceSelector:
+          kubernetes.io/metadata.name: istio-system
+        podSelector:
+          istio: ingressgateway
+        port: 443
+      - name: router
+        cidr: "10.43.245.187/32"
+        port: 2496
+```
+
+Bootstrap should derive the underlay endpoint CIDRs from the live
+`ziti-controller-client`, `istio-ingressgateway`, and `ziti-router-edge`
+ClusterIPs. For the runtime ingress gateway endpoint, bootstrap should also
+set endpoint pod CIDRs and the Istio ingress gateway namespace/pod selectors
+when available so CNIs can follow endpoint pods instead of only the Service
+ClusterIP. Set the controller and router ports to the configured
+OpenZiti underlay port, and set the runtime ingress gateway port to `443`.
+The deprecated `zitiControllerEnrollment` and `zitiRuntimeIngressGateway` values
+remain as named compatibility helpers for deployments that prefer fixed keys.
+`zitiRuntimeIngressGateway` accepts the same runtime backend CIDR and selector
+fields as `zitiUnderlay.endpoints`, but new bootstrap config should use
+`zitiUnderlay.endpoints` for the complete endpoint set.
+
 The runner runtime does not create or update NetworkPolicy resources, and its
 ServiceAccount does not need `networkpolicies` RBAC.
-
-## Workload egress NetworkPolicy
-
-The chart installs `agent-workload-egress` by default in the workload namespace.
-It selects pods labeled `agyn.dev/managed-by: agents-orchestrator`, allows DNS,
-allows the OpenZiti tunnel CIDR (`100.64.0.0/10`), and allows public internet
-egress while excluding configured cluster and internal CIDRs. Set
-`workloadEgressNetworkPolicy.clusterPodCIDR`,
-`workloadEgressNetworkPolicy.clusterServiceCIDR`, and
-`workloadEgressNetworkPolicy.additionalInternalCIDRs` for a production cluster.
