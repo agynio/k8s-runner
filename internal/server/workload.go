@@ -689,6 +689,9 @@ func (s *Server) ensurePVC(ctx context.Context, volume *runnerv1.VolumeSpec, lab
 }
 
 func (s *Server) repairPVCLabels(ctx context.Context, pvc *corev1.PersistentVolumeClaim, workloadLabels map[string]string, volumeLabels map[string]string) error {
+	if pvc.Labels[managedByLabelKey] != managedByLabelValue {
+		return status.Errorf(codes.FailedPrecondition, "pvc_not_managed_by_runner: %s", pvc.Name)
+	}
 	labels := map[string]string{
 		managedByLabelKey: managedByLabelValue,
 	}
