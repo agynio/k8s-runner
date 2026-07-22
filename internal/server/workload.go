@@ -637,7 +637,11 @@ func (s *Server) ensurePVC(ctx context.Context, volume *runnerv1.VolumeSpec, lab
 		return "", status.Errorf(codes.InvalidArgument, "invalid_pvc_name: %s", strings.Join(errs, ", "))
 	}
 
-	if _, err := s.clientset.CoreV1().PersistentVolumeClaims(s.namespace).Get(ctx, pvcName, metav1.GetOptions{}); err == nil {
+	existing, err := s.clientset.CoreV1().PersistentVolumeClaims(s.namespace).Get(ctx, pvcName, metav1.GetOptions{})
+	if err == nil {
+		if err := s.repairPVCLabels(ctx, existing, labels, volume.GetLabels()); err != nil {
+			return "", err
+		}
 		return pvcName, nil
 	} else if !apierrors.IsNotFound(err) {
 		return "", grpcErrorFromKube(s.logger, err, codes.Internal)
@@ -682,6 +686,45 @@ func (s *Server) ensurePVC(ctx context.Context, volume *runnerv1.VolumeSpec, lab
 
 	s.logger.Info("created pvc", zap.String("pvc", pvcName))
 	return pvcName, nil
+}
+
+func (s *Server) repairPVCLabels(ctx context.Context, pvc *corev1.PersistentVolumeClaim, workloadLabels map[string]string, volumeLabels map[string]string) error {
+	labels := map[string]string{
+		managedByLabelKey: managedByLabelValue,
+	}
+	for key, value := range workloadLabels {
+		if key == workloadIDLabelKey {
+			continue
+		}
+		labels[key] = value
+	}
+	if err := addLabels(labels, volumeLabels); err != nil {
+		return status.Errorf(codes.InvalidArgument, "invalid_volume_label: %v", err)
+	}
+
+	patched := false
+	merged := make(map[string]string, len(pvc.Labels)+len(labels))
+	for key, value := range pvc.Labels {
+		merged[key] = value
+	}
+	for key, value := range labels {
+		if merged[key] == value {
+			continue
+		}
+		merged[key] = value
+		patched = true
+	}
+	if !patched {
+		return nil
+	}
+
+	updated := pvc.DeepCopy()
+	updated.Labels = merged
+	if _, err := s.clientset.CoreV1().PersistentVolumeClaims(s.namespace).Update(ctx, updated, metav1.UpdateOptions{}); err != nil {
+		return grpcErrorFromKube(s.logger, err, codes.Internal)
+	}
+	s.logger.Info("repaired pvc labels", zap.String("pvc", pvc.Name))
+	return nil
 }
 
 func buildContainers(req *runnerv1.StartWorkloadRequest, volumes []corev1.Volume, inlineFileKeys map[string]string) ([]corev1.Container, []corev1.Container, []string, error) {
