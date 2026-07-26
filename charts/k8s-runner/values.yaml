@@ -87,9 +87,41 @@ containerPorts:
 
 command: []
 args: []
+# What this runner offers. Reported to the platform at startup and replacing
+# whatever it reported before, so this file is the single source of truth for
+# the sizes and storage tiers workloads can ask for by name.
+# Where the catalog is mounted and read from. The env var below and the mount
+# are both derived from this.
+catalogPath: /etc/agyn/runner-catalog/catalog.yaml
+
+catalog:
+  flavors:
+    - name: ram-2gb
+      default: true
+      resources:
+        requestsCpu: "500m"
+        requestsMemory: "2Gi"
+        limitsCpu: "2"
+        limitsMemory: "2Gi"
+    - name: ram-4gb
+      resources:
+        requestsCpu: "1"
+        requestsMemory: "4Gi"
+        limitsCpu: "4"
+        limitsMemory: "4Gi"
+  storageClasses:
+    # An empty storageClassName uses the cluster default, which is what
+    # unclassed volumes already got.
+    - name: default
+      default: true
+      storageClassName: ""
+  capabilities: []
+
 env:
   - name: GRPC_ADDR
     value: "0.0.0.0:50051"
+  - name: CATALOG_PATH
+    value: "/etc/agyn/runner-catalog/catalog.yaml"
   - name: KUBE_NAMESPACE
     value: "agyn-workloads"
   - name: PVC_STORAGE_SIZE

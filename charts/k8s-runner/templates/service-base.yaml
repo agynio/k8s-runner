@@ -1,3 +1,4 @@
+{{- include "k8s-runner.configureCatalog" . -}}
 {{- $rbac := include "service-base.rbac" . -}}
 {{- $sa := include "service-base.serviceAccount" . -}}
 {{- $svc := include "service-base.service" . -}}

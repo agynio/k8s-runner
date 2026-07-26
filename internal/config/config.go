@@ -31,6 +31,9 @@ type Config struct {
 	StorageSize               string
 	LogLevel                  string
 	CapabilityImplementations CapabilityImplementations
+	// Catalog is what this runner reports it offers. Declared in the runner's
+	// own configuration, since every entry needs an implementation here.
+	Catalog Catalog
 }
 
 type DockerImplementation string
@@ -83,6 +86,12 @@ func Load() (Config, error) {
 	} else {
 		cfg.ZitiEnrollmentTimeout = defaultZitiEnrollmentTimeout
 	}
+
+	catalog, err := LoadCatalog(os.Getenv("CATALOG_PATH"))
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.Catalog = catalog
 
 	storageClass := strings.TrimSpace(os.Getenv("PVC_STORAGE_CLASS"))
 	if storageClass != "" {
