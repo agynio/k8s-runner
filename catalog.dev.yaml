@@ -1,0 +1,22 @@
+# Catalog used when the runner is run from source through devspace. The chart
+# mounts the equivalent from a ConfigMap; this file exists so a source run
+# exercises catalog reporting instead of silently reporting nothing.
+flavors:
+  - name: ram-2gb
+    default: true
+    resources:
+      requestsCpu: "500m"
+      requestsMemory: "2Gi"
+      limitsCpu: "2"
+      limitsMemory: "2Gi"
+  - name: ram-4gb
+    resources:
+      requestsCpu: "1"
+      requestsMemory: "4Gi"
+      limitsCpu: "4"
+      limitsMemory: "4Gi"
+storageClasses:
+  - name: default
+    default: true
+    storageClassName: ""
+capabilities: []

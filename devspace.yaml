@@ -63,6 +63,9 @@ functions:
       {"op": "add", "path": "/spec/template/spec/volumes",
        "value": [{"name": "data", "emptyDir": {}}]},
 
+      {"op": "add", "path": "/spec/template/spec/containers/0/env/-",
+       "value": {"name": "CATALOG_PATH", "value": "/opt/app/data/catalog.dev.yaml"}},
+
       {"op": "add", "path": "/spec/template/spec/securityContext",
        "value": {"runAsUser": 1000, "fsGroup": 1000}},
 
