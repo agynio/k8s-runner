@@ -57,9 +57,6 @@ functions:
          "seccompProfile": {"type": "RuntimeDefault"}
        }},
 
-      {"op": "remove", "path": "/spec/template/spec/containers/0/livenessProbe"},
-      {"op": "remove", "path": "/spec/template/spec/containers/0/readinessProbe"},
-
       {"op": "add", "path": "/spec/template/spec/volumes",
        "value": [{"name": "data", "emptyDir": {}}]},
 
@@ -74,6 +71,11 @@ functions:
     ]
     PATCH
     )"
+    # Probes are dropped separately: `go run` recompiles on every restart and
+    # would be killed before it finishes. A strategic merge tolerates the
+    # fields already being absent, so the patch can be re-run.
+    kubectl patch deployment k8s-runner -n ${K8S_RUNNER_NAMESPACE} --type strategic --patch \
+      '{"spec":{"template":{"spec":{"containers":[{"name":"k8s-runner","livenessProbe":null,"readinessProbe":null}]}}}}'
   wait_for_k8s_runner: |-
     echo "Waiting for k8s-runner deployment to roll out..."
     kubectl rollout status deployment/k8s-runner \
