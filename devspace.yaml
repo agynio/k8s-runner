@@ -81,7 +81,7 @@ functions:
 
     echo "Waiting for k8s-runner source sync and process start..."
     ELAPSED=0
-    LABEL_SELECTOR="app.kubernetes.io/name=k8s-runner,app.kubernetes.io/instance=k8s-runner"
+    LABEL_SELECTOR="app.kubernetes.io/name=k8s-runner"
     until kubectl logs -n ${K8S_RUNNER_NAMESPACE} -l "${LABEL_SELECTOR}" --tail=200 2>/dev/null | \
       grep -q "gRPC server starting"; do
       sleep 5
@@ -163,7 +163,6 @@ dev:
     namespace: ${K8S_RUNNER_NAMESPACE}
     labelSelector:
       app.kubernetes.io/name: k8s-runner
-      app.kubernetes.io/instance: k8s-runner
     containers:
       k8s-runner:
         container: k8s-runner
@@ -195,7 +194,6 @@ dev:
     namespace: ${K8S_RUNNER_NAMESPACE}
     labelSelector:
       app.kubernetes.io/name: k8s-runner
-      app.kubernetes.io/instance: k8s-runner
     containers:
       k8s-runner:
         container: k8s-runner
