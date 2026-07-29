@@ -124,11 +124,19 @@ func run() error {
 
 		// Reported before the service is bound, so the platform knows what this
 		// runner offers by the time anything can be scheduled onto it.
-		if err := retryWithBackoff(enrollmentCtx, logger, "catalog report", func(attemptCtx context.Context) error {
+		//
+		// On its own deadline rather than the enrollment one: enrollment has
+		// already consumed an unknown share of that budget by this point, so
+		// sharing it made a slow enrollment leave no time to report and killed
+		// the runner for a delay it had already survived.
+		catalogCtx, cancelCatalog := context.WithTimeout(ctx, cfg.ZitiEnrollmentTimeout)
+		catalogErr := retryWithBackoff(catalogCtx, logger, "catalog report", func(attemptCtx context.Context) error {
 			_, requestErr := gatewayClient.ReportRunnerCatalog(attemptCtx, catalogReport(cfg))
 			return requestErr
-		}); err != nil {
-			return fmt.Errorf("report runner catalog: %w", err)
+		})
+		cancelCatalog()
+		if catalogErr != nil {
+			return fmt.Errorf("report runner catalog: %w", catalogErr)
 		}
 		logger.Info("catalog reported",
 			zap.Int("flavors", len(cfg.Catalog.Flavors)),
