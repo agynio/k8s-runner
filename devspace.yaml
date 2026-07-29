@@ -188,8 +188,6 @@ dev:
         logs:
           enabled: true
           lastLines: 200
-    ports:
-      - port: "50051"
 
   # One-shot variant of k8s-runner for CI deploy pipeline. Keep sync excludePaths in sync.
   k8s-runner-deploy:
