@@ -1,0 +1,16 @@
+{{- if .Values.catalog }}
+{{- /*
+  The catalog is mounted rather than passed as env vars because it is a
+  structured document, and because a checksum annotation on the deployment can
+  then restart the runner when it changes — a report only happens at startup.
+*/}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "service-base.fullname" . }}-catalog
+  labels:
+    {{- include "service-base.labels" . | nindent 4 }}
+data:
+  catalog.yaml: |
+{{ toYaml .Values.catalog | indent 4 }}
+{{- end }}

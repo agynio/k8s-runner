@@ -122,6 +122,38 @@ func run() error {
 			return fmt.Errorf("enroll runner via gateway: %w", err)
 		}
 
+		// Reported before the service is bound, so the platform knows what this
+		// runner offers by the time anything can be scheduled onto it.
+		//
+		// On its own deadline rather than the enrollment one: enrollment has
+		// already consumed an unknown share of that budget by this point, so
+		// sharing it made a slow enrollment leave no time to report and killed
+		// the runner for a delay it had already survived.
+		catalogCtx, cancelCatalog := context.WithTimeout(ctx, cfg.ZitiEnrollmentTimeout)
+		catalogErr := retryWithBackoff(catalogCtx, logger, "catalog report", func(attemptCtx context.Context) error {
+			_, requestErr := gatewayClient.ReportRunnerCatalog(attemptCtx, catalogReport(cfg))
+			return requestErr
+		})
+		cancelCatalog()
+		if catalogErr != nil {
+			// Not fatal. A platform whose Runners service predates
+			// ReportRunnerCatalog answers Unimplemented, and refusing to start
+			// would mean a runner cannot be upgraded before the platform is —
+			// it would crash-loop rather than serve.
+			//
+			// Serving without a reported catalog is already a handled state: a
+			// workload naming a flavor the platform cannot resolve fails to
+			// schedule with the standard retry and unschedulable flagging, and
+			// recovers as soon as a report lands.
+			logger.Error("catalog report failed; serving without it",
+				zap.Error(catalogErr))
+		} else {
+			logger.Info("catalog reported",
+				zap.Int("flavors", len(cfg.Catalog.Flavors)),
+				zap.Int("storageClasses", len(cfg.Catalog.StorageClasses)),
+				zap.Int("capabilities", len(cfg.Catalog.Capabilities)))
+		}
+
 		zitiConfig := &ziti.Config{}
 		if err := json.Unmarshal([]byte(enrollResponse.IdentityJson), zitiConfig); err != nil {
 			return fmt.Errorf("parse ziti identity: %w", err)
@@ -207,4 +239,38 @@ func isRetryableGrpcError(err error) bool {
 		return false
 	}
 	return statusErr.Code() == codes.Unavailable || statusErr.Code() == codes.Unknown
+}
+
+// catalogReport converts the runner's declared catalog into the report the
+// platform stores. The runner-side mapping (which Kubernetes StorageClass
+// backs an entry) stays here — the platform only needs the names.
+func catalogReport(cfg config.Config) *runnersv1.ReportRunnerCatalogRequest {
+	flavors := make([]*runnersv1.FlavorEntry, 0, len(cfg.Catalog.Flavors))
+	for _, flavor := range cfg.Catalog.Flavors {
+		flavors = append(flavors, &runnersv1.FlavorEntry{
+			Name:       flavor.Name,
+			Default:    flavor.Default,
+			Deprecated: flavor.Deprecated,
+			Resources: &runnersv1.ComputeResources{
+				RequestsCpu:    flavor.Resources.RequestsCPU,
+				RequestsMemory: flavor.Resources.RequestsMemory,
+				LimitsCpu:      flavor.Resources.LimitsCPU,
+				LimitsMemory:   flavor.Resources.LimitsMemory,
+			},
+		})
+	}
+	storageClasses := make([]*runnersv1.StorageClassEntry, 0, len(cfg.Catalog.StorageClasses))
+	for _, class := range cfg.Catalog.StorageClasses {
+		storageClasses = append(storageClasses, &runnersv1.StorageClassEntry{
+			Name:       class.Name,
+			Default:    class.Default,
+			Deprecated: class.Deprecated,
+		})
+	}
+	return &runnersv1.ReportRunnerCatalogRequest{
+		ServiceToken:   cfg.ServiceToken,
+		Flavors:        flavors,
+		StorageClasses: storageClasses,
+		Capabilities:   cfg.Catalog.Capabilities,
+	}
 }
