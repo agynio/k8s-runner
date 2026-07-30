@@ -136,12 +136,23 @@ func run() error {
 		})
 		cancelCatalog()
 		if catalogErr != nil {
-			return fmt.Errorf("report runner catalog: %w", catalogErr)
+			// Not fatal. A platform whose Runners service predates
+			// ReportRunnerCatalog answers Unimplemented, and refusing to start
+			// would mean a runner cannot be upgraded before the platform is —
+			// it would crash-loop rather than serve.
+			//
+			// Serving without a reported catalog is already a handled state: a
+			// workload naming a flavor the platform cannot resolve fails to
+			// schedule with the standard retry and unschedulable flagging, and
+			// recovers as soon as a report lands.
+			logger.Error("catalog report failed; serving without it",
+				zap.Error(catalogErr))
+		} else {
+			logger.Info("catalog reported",
+				zap.Int("flavors", len(cfg.Catalog.Flavors)),
+				zap.Int("storageClasses", len(cfg.Catalog.StorageClasses)),
+				zap.Int("capabilities", len(cfg.Catalog.Capabilities)))
 		}
-		logger.Info("catalog reported",
-			zap.Int("flavors", len(cfg.Catalog.Flavors)),
-			zap.Int("storageClasses", len(cfg.Catalog.StorageClasses)),
-			zap.Int("capabilities", len(cfg.Catalog.Capabilities)))
 
 		zitiConfig := &ziti.Config{}
 		if err := json.Unmarshal([]byte(enrollResponse.IdentityJson), zitiConfig); err != nil {
