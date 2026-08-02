@@ -4,26 +4,6 @@ vars:
   K8S_RUNNER_NAMESPACE: platform
 
 functions:
-  disable_argocd_sync: |-
-    if kubectl get application k8s-runner -n argocd >/dev/null 2>&1; then
-      echo "Disabling ArgoCD auto-sync for k8s-runner..."
-      kubectl patch application k8s-runner -n argocd \
-        --type merge \
-        -p '{"spec":{"syncPolicy":{"automated":null}}}'
-      echo "ArgoCD auto-sync disabled."
-    else
-      echo "WARNING: ArgoCD Application 'k8s-runner' not found in argocd namespace."
-    fi
-  restore_argocd_sync: &restore_argocd_sync |-
-    if kubectl get application k8s-runner -n argocd >/dev/null 2>&1; then
-      echo "Re-enabling ArgoCD auto-sync for k8s-runner..."
-      kubectl patch application k8s-runner -n argocd \
-        --type merge \
-        -p '{"spec":{"syncPolicy":{"automated":{"prune":true,"selfHeal":true}}}}'
-      echo "ArgoCD auto-sync restored."
-    else
-      echo "WARNING: ArgoCD Application 'k8s-runner' not found in argocd namespace."
-    fi
   patch_deployment: |-
     echo "Patching k8s-runner deployment for DevSpace..."
     kubectl patch deployment k8s-runner -n ${K8S_RUNNER_NAMESPACE} --type json --patch "$(cat <<'PATCH'
@@ -105,8 +85,6 @@ functions:
 commands:
   deploy: |-
     devspace run-pipeline deploy $@
-  restore-argocd: |-
-    devspace run-pipeline restore-argocd $@
 
 pipelines:
   dev:
@@ -115,7 +93,6 @@ pipelines:
         short: w
         description: "Keep DevSpace running and stream logs"
     run: |-
-      disable_argocd_sync
       patch_deployment
       if [ "$(get_flag "watch")" == "true" ]; then
         start_dev --disable-pod-replace k8s-runner
@@ -140,25 +117,27 @@ pipelines:
 
   deploy:
     run: |-
-      disable_argocd_sync
+      # Scaled to zero before the deployment is patched, and back up after.
+      # The runner holds a Ziti identity it enrolled with, and two copies of it
+      # racing to re-enrol leaves the overlay with an identity neither owns --
+      # so the released pod goes away before the source one arrives, rather
+      # than the two overlapping through a rolling update.
+      LABEL_SELECTOR="app.kubernetes.io/name=k8s-runner"
+      echo "Scaling k8s-runner down before source patch..."
+      kubectl scale deployment/k8s-runner -n ${K8S_RUNNER_NAMESPACE} --replicas=0
+      if [ -n "$(kubectl get pods -n ${K8S_RUNNER_NAMESPACE} -l "${LABEL_SELECTOR}" -o name)" ]; then
+        kubectl wait --for=delete pod -n ${K8S_RUNNER_NAMESPACE} -l "${LABEL_SELECTOR}" --timeout=240s
+      fi
       patch_deployment
-      kubectl rollout status deployment/k8s-runner -n ${K8S_RUNNER_NAMESPACE} --timeout=120s
+      kubectl patch deployment k8s-runner -n ${K8S_RUNNER_NAMESPACE} --type merge -p '{"spec":{"strategy":{"type":"Recreate","rollingUpdate":null}}}'
+      kubectl scale deployment/k8s-runner -n ${K8S_RUNNER_NAMESPACE} --replicas=1
+      kubectl rollout status deployment/k8s-runner -n ${K8S_RUNNER_NAMESPACE} --timeout=240s
       start_dev --disable-pod-replace k8s-runner-deploy
       wait_for_k8s_runner
       echo "Deploy complete. k8s-runner is running from source."
 
-  restore-argocd:
-    run: |-
-      restore_argocd_sync
 
 hooks:
-  - name: restore-argocd-auto-sync
-    events:
-      - after:dev:k8s-runner
-    command: bash
-    args:
-      - -c
-      - *restore_argocd_sync
 
 dev:
   k8s-runner:
