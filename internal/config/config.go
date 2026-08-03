@@ -36,6 +36,11 @@ type Config struct {
 	Catalog Catalog
 }
 
+// CapabilityDocker is the capability name a workload asks for and the runner
+// reports. Named here rather than in the server package so the startup report
+// and the request handling cannot drift apart.
+const CapabilityDocker = "docker"
+
 type DockerImplementation string
 
 const (
