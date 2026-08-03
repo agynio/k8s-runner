@@ -13,7 +13,7 @@ import (
 )
 
 const (
-	dockerCapability              = "docker"
+	dockerCapability              = config.CapabilityDocker
 	dockerSidecarName             = "docker-daemon"
 	dockerDataVolumeName          = "docker-data"
 	dockerRunVolumeName           = "docker-run"

@@ -8,6 +8,8 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"sort"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -271,6 +273,39 @@ func catalogReport(cfg config.Config) *runnersv1.ReportRunnerCatalogRequest {
 		ServiceToken:   cfg.ServiceToken,
 		Flavors:        flavors,
 		StorageClasses: storageClasses,
-		Capabilities:   cfg.Catalog.Capabilities,
+		Capabilities:   catalogCapabilities(cfg),
 	}
+}
+
+// catalogCapabilities reports what this runner can actually do, which is what
+// it has an implementation configured for. The catalog listed them separately
+// and the two silently disagreed: docker was configured and working, the
+// catalog said nothing, and the Orchestrator placed no agent that asked for it
+// -- "no eligible runners found (required capabilities: [docker])" -- with the
+// runner right there able to serve them.
+//
+// The catalog entry is still honoured, so a capability can be advertised ahead
+// of the implementation landing, but it no longer has to be kept in step by
+// hand for the ones the runner already implements.
+func catalogCapabilities(cfg config.Config) []string {
+	capabilities := make([]string, 0, len(cfg.Catalog.Capabilities)+1)
+	seen := map[string]struct{}{}
+	add := func(capability string) {
+		if capability == "" {
+			return
+		}
+		if _, ok := seen[capability]; ok {
+			return
+		}
+		seen[capability] = struct{}{}
+		capabilities = append(capabilities, capability)
+	}
+	for _, capability := range cfg.Catalog.Capabilities {
+		add(strings.TrimSpace(capability))
+	}
+	if cfg.CapabilityImplementations.Docker != "" {
+		add(config.CapabilityDocker)
+	}
+	sort.Strings(capabilities)
+	return capabilities
 }
