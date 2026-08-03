@@ -238,14 +238,24 @@ workloadEgressNetworkPolicy:
       kubernetes.io/metadata.name: ziti
     podSelector:
       app.kubernetes.io/name: ziti-workload-dns
+  # At least one entry is required while the policy is enabled: it excludes
+  # every private range, so without an allowance here a workload cannot reach
+  # the ziti controller it enrols against and no agent starts. The template
+  # fails rather than render a policy that severs the overlay.
+  #
+  # port is the *pod's* port, not the Service's. A NetworkPolicy is evaluated
+  # after the Service DNAT, so naming the Service port matches nothing.
   zitiUnderlay:
     endpoints: []
     # Example:
     # - name: controller
-    #   cidr: ""
-    #   namespaceSelector: {}
-    #   podSelector: {}
-    #   port: 2496
+    #   namespaceSelector:
+    #     kubernetes.io/metadata.name: ziti
+    #   port: 1280
+    # - name: router
+    #   namespaceSelector:
+    #     kubernetes.io/metadata.name: ziti
+    #   port: 3022
     # - name: ingress-gateway
     #   cidr: ""
     #   backendCIDRs: []

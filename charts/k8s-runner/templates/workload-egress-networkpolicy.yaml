@@ -53,6 +53,9 @@
 {{- $zitiUnderlayEndpoints = append $zitiUnderlayEndpoints (dict "name" "zitiRuntimeIngressGateway-backend" "cidr" $cidr "port" $policy.zitiRuntimeIngressGateway.port) -}}
 {{- end }}
 {{- end }}
+{{- if not $zitiUnderlayEndpoints }}
+{{- fail "workloadEgressNetworkPolicy is enabled but names no ziti underlay endpoint. The policy excludes every private range, so a workload could not reach the controller it enrols against and no agent would start. Configure workloadEgressNetworkPolicy.zitiUnderlay.endpoints (ports are the pod's, not the Service's), or set workloadEgressNetworkPolicy.enabled=false." }}
+{{- end }}
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
