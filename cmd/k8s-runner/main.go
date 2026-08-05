@@ -35,6 +35,11 @@ const (
 	retryMaxBackoff     = 15 * time.Second
 )
 
+const (
+	zitiIdentityCheckInterval    = 30 * time.Second
+	zitiIdentityFailureThreshold = 5
+)
+
 func main() {
 	if err := run(); err != nil {
 		fmt.Fprintf(os.Stderr, "k8s-runner failed: %v\n", err)
@@ -173,6 +178,15 @@ func run() error {
 		}
 		defer zitiListener.Close()
 		startServe(zitiListener, "ziti")
+
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			err := watchZitiIdentity(ctx, zitiContext.RefreshServices, zitiIdentityCheckInterval, zitiIdentityFailureThreshold, logger)
+			if err != nil {
+				errCh <- err
+			}
+		}()
 	}
 
 	select {
@@ -308,4 +322,37 @@ func catalogCapabilities(cfg config.Config) []string {
 	}
 	sort.Strings(capabilities)
 	return capabilities
+}
+
+// The runner enrols once, at startup. If the controller stops accepting that
+// identity -- it was deleted, or the controller lost it -- the SDK retries the
+// bind forever and the runner stays Running with no terminator, so the platform
+// keeps scheduling onto a runner nothing can reach. Exiting hands the problem to
+// Kubernetes, which restarts the pod into a fresh enrolment.
+func watchZitiIdentity(ctx context.Context, refresh func() error, interval time.Duration, threshold int, logger *zap.Logger) error {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	failures := 0
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-ticker.C:
+		}
+
+		if err := refresh(); err != nil {
+			failures++
+			logger.Warn("ziti identity check failed",
+				zap.Int("consecutiveFailures", failures), zap.Error(err))
+			if failures >= threshold {
+				return fmt.Errorf("ziti identity is no longer usable after %d checks: %w", failures, err)
+			}
+			continue
+		}
+		if failures > 0 {
+			logger.Info("ziti identity recovered", zap.Int("afterFailures", failures))
+		}
+		failures = 0
+	}
 }
