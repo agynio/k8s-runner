@@ -1682,3 +1682,49 @@ func assertInlineVolumeMount(t *testing.T, container corev1.Container, mountPath
 	}
 	t.Fatalf("container %s missing inline mount %s", container.Name, mountPath)
 }
+
+// Pull credentials live as secrets alongside every other workload's in the
+// shared workload namespace, so a workload must not be able to read the API and
+// enumerate its neighbours'.
+func TestWorkloadPodDoesNotMountAServiceAccountToken(t *testing.T) {
+	clientset := fake.NewSimpleClientset()
+	server := New(Options{Clientset: clientset, Namespace: "default", StorageSize: "1Gi", Logger: zap.NewNop()})
+
+	workloadID := "3f1c8a52-1a2b-4c3d-9e8f-0a1b2c3d4e5f"
+	if _, err := server.StartWorkload(context.Background(), &runnerv1.StartWorkloadRequest{
+		WorkloadId: workloadID,
+		Main:       &runnerv1.ContainerSpec{Name: "main", Image: "busybox"},
+	}); err != nil {
+		t.Fatalf("StartWorkload: %v", err)
+	}
+
+	pods, err := clientset.CoreV1().Pods("default").List(context.Background(), metav1.ListOptions{})
+	if err != nil || len(pods.Items) != 1 {
+		t.Fatalf("pods = %v, err = %v", pods, err)
+	}
+	automount := pods.Items[0].Spec.AutomountServiceAccountToken
+	if automount == nil || *automount {
+		t.Fatal("expected automountServiceAccountToken to be false")
+	}
+}
+
+// One Secret per workload: every catalog image resolves to the same proxy host,
+// so one auths entry covers the whole Pod.
+func TestSingleCredentialProducesOneUnindexedSecret(t *testing.T) {
+	server := New(Options{Clientset: fake.NewSimpleClientset(), Namespace: "default", StorageSize: "1Gi", Logger: zap.NewNop()})
+
+	workloadID := "9a8b7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d"
+	refs, names, err := server.buildImagePullSecrets(context.Background(), workloadID, []*runnerv1.ImagePullCredential{
+		{Registry: "registry.agyn.dev", Username: "w-1", Password: "secret"},
+	})
+	if err != nil {
+		t.Fatalf("buildImagePullSecrets: %v", err)
+	}
+	want := "workload-" + workloadID + "-pull"
+	if len(refs) != 1 || refs[0].Name != want {
+		t.Fatalf("refs = %+v, want a single %q", refs, want)
+	}
+	if len(names) != 1 || names[0] != want {
+		t.Fatalf("names = %v, want [%s]", names, want)
+	}
+}

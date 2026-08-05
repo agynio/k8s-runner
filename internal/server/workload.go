@@ -21,6 +21,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/validation"
+	"k8s.io/utils/ptr"
 
 	runnerv1 "github.com/agynio/k8s-runner/internal/.gen/agynio/api/runner/v1"
 	"github.com/agynio/k8s-runner/internal/config"
@@ -124,6 +125,10 @@ func (s *Server) StartWorkload(ctx context.Context, req *runnerv1.StartWorkloadR
 			InitContainers: initContainers,
 			Containers:     containers,
 			Volumes:        volumes,
+			// Pull credentials live as secrets alongside every other
+			// workload's in this shared namespace. Without this a workload
+			// with API access could read its neighbours'.
+			AutomountServiceAccountToken: ptr.To(false),
 		},
 	}
 	if hostUsers != nil {
@@ -518,10 +523,18 @@ func (s *Server) buildImagePullSecrets(
 		})
 	}
 
+	// One Secret per workload rather than one per credential. Every catalog
+	// image resolves to the same image proxy host, so the auths map holds one
+	// entry: the key selects which credential, the request path selects which
+	// image, and only the proxy sees both. The indexed form is kept for a spec
+	// that still carries several upstream registries.
 	secretRefs := make([]corev1.LocalObjectReference, 0, len(validated))
 	secretNames := make([]string, 0, len(validated))
 	for idx, credential := range validated {
-		secretName := fmt.Sprintf("workload-%s-pull-%d", workloadID, idx)
+		secretName := fmt.Sprintf("workload-%s-pull", workloadID)
+		if len(validated) > 1 {
+			secretName = fmt.Sprintf("workload-%s-pull-%d", workloadID, idx)
+		}
 		configJSON, err := buildDockerConfigJSON(credential.registry, credential.username, credential.password)
 		if err != nil {
 			s.deleteImagePullSecrets(ctx, workloadID, secretNames)
