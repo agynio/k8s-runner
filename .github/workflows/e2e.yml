@@ -33,7 +33,3 @@ jobs:
         uses: agynio/e2e/.github/actions/run-tests@main
         with:
           service: k8s_runner
-
-      - name: Restore ArgoCD sync
-        if: always()
-        run: devspace run restore-argocd
