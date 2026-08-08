@@ -1057,6 +1057,167 @@ func TestStartWorkloadAppliesLabelsToPodAndPVC(t *testing.T) {
 	}
 }
 
+func TestStartWorkloadRepairsExistingPVCLabels(t *testing.T) {
+	ctx := context.Background()
+	clientset := fake.NewSimpleClientset(&corev1.PersistentVolumeClaim{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "pvc-data",
+			Namespace: "default",
+			Labels: map[string]string{
+				managedByLabelKey: managedByLabelValue,
+				volumeKeyLabelKey: "stale-volume-key",
+				"existing":        "kept",
+			},
+		},
+	})
+	server := New(Options{
+		Clientset:   clientset,
+		Namespace:   "default",
+		StorageSize: "1Gi",
+		Logger:      zap.NewNop(),
+	})
+	req := &runnerv1.StartWorkloadRequest{
+		Main: &runnerv1.ContainerSpec{Name: "main", Image: "busybox"},
+		Labels: map[string]string{
+			workloadKeyLabelKey: "workload-key-2",
+			"team":              "core",
+		},
+		Volumes: []*runnerv1.VolumeSpec{
+			{
+				Name:           "data",
+				Kind:           runnerv1.VolumeKind_VOLUME_KIND_NAMED,
+				PersistentName: "pvc-data",
+				Labels: map[string]string{
+					volumeKeyLabelKey: "8b95765e-9fee-5b9b-a918-a1c06e994357",
+				},
+			},
+		},
+	}
+
+	if _, err := server.StartWorkload(ctx, req); err != nil {
+		t.Fatalf("StartWorkload returned error: %v", err)
+	}
+
+	pvc, err := clientset.CoreV1().PersistentVolumeClaims("default").Get(ctx, "pvc-data", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("expected pvc reused: %v", err)
+	}
+	if pvc.Labels[volumeKeyLabelKey] != "8b95765e-9fee-5b9b-a918-a1c06e994357" {
+		t.Fatalf("expected repaired volume key, got %q", pvc.Labels[volumeKeyLabelKey])
+	}
+	if pvc.Labels[workloadKeyLabelKey] != "workload-key-2" {
+		t.Fatalf("expected repaired workload key, got %q", pvc.Labels[workloadKeyLabelKey])
+	}
+	if pvc.Labels["team"] != "core" {
+		t.Fatalf("expected team label, got %q", pvc.Labels["team"])
+	}
+	if pvc.Labels["existing"] != "kept" {
+		t.Fatalf("expected existing label to be preserved")
+	}
+
+	volumes, err := server.ListVolumes(ctx, &runnerv1.ListVolumesRequest{})
+	if err != nil {
+		t.Fatalf("ListVolumes returned error: %v", err)
+	}
+	if len(volumes.Volumes) != 1 {
+		t.Fatalf("expected repaired pvc to be listed, got %d", len(volumes.Volumes))
+	}
+	if volumes.Volumes[0].GetInstanceId() != "pvc-data" || volumes.Volumes[0].GetVolumeKey() != "8b95765e-9fee-5b9b-a918-a1c06e994357" {
+		t.Fatalf("unexpected listed volume: %v", volumes.Volumes[0])
+	}
+}
+
+func TestStartWorkloadRepairsExistingPVCMissingVolumeKey(t *testing.T) {
+	ctx := context.Background()
+	clientset := fake.NewSimpleClientset(&corev1.PersistentVolumeClaim{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "pvc-data",
+			Namespace: "default",
+			Labels: map[string]string{
+				managedByLabelKey: managedByLabelValue,
+			},
+		},
+	})
+	server := New(Options{
+		Clientset:   clientset,
+		Namespace:   "default",
+		StorageSize: "1Gi",
+		Logger:      zap.NewNop(),
+	})
+	req := &runnerv1.StartWorkloadRequest{
+		Main: &runnerv1.ContainerSpec{Name: "main", Image: "busybox"},
+		Volumes: []*runnerv1.VolumeSpec{
+			{
+				Name:           "data",
+				Kind:           runnerv1.VolumeKind_VOLUME_KIND_NAMED,
+				PersistentName: "pvc-data",
+				Labels: map[string]string{
+					volumeKeyLabelKey: "8b95765e-9fee-5b9b-a918-a1c06e994357",
+				},
+			},
+		},
+	}
+
+	if _, err := server.StartWorkload(ctx, req); err != nil {
+		t.Fatalf("StartWorkload returned error: %v", err)
+	}
+	pvc, err := clientset.CoreV1().PersistentVolumeClaims("default").Get(ctx, "pvc-data", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("expected pvc reused: %v", err)
+	}
+	if pvc.Labels[volumeKeyLabelKey] != "8b95765e-9fee-5b9b-a918-a1c06e994357" {
+		t.Fatalf("expected repaired volume key, got %q", pvc.Labels[volumeKeyLabelKey])
+	}
+}
+
+func TestStartWorkloadRejectsUnmanagedExistingPVC(t *testing.T) {
+	ctx := context.Background()
+	clientset := fake.NewSimpleClientset(&corev1.PersistentVolumeClaim{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "pvc-data",
+			Namespace: "default",
+			Labels: map[string]string{
+				"owner": "external",
+			},
+		},
+	})
+	server := New(Options{
+		Clientset:   clientset,
+		Namespace:   "default",
+		StorageSize: "1Gi",
+		Logger:      zap.NewNop(),
+	})
+	req := &runnerv1.StartWorkloadRequest{
+		Main: &runnerv1.ContainerSpec{Name: "main", Image: "busybox"},
+		Volumes: []*runnerv1.VolumeSpec{
+			{
+				Name:           "data",
+				Kind:           runnerv1.VolumeKind_VOLUME_KIND_NAMED,
+				PersistentName: "pvc-data",
+				Labels: map[string]string{
+					volumeKeyLabelKey: "8b95765e-9fee-5b9b-a918-a1c06e994357",
+				},
+			},
+		},
+	}
+
+	_, err := server.StartWorkload(ctx, req)
+	if err == nil {
+		t.Fatal("expected unmanaged pvc to be rejected")
+	}
+	st, ok := status.FromError(err)
+	if !ok || st.Code() != codes.FailedPrecondition {
+		t.Fatalf("expected failed precondition error, got %v", err)
+	}
+	pvc, err := clientset.CoreV1().PersistentVolumeClaims("default").Get(ctx, "pvc-data", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("expected pvc to remain: %v", err)
+	}
+	if pvc.Labels[managedByLabelKey] != "" {
+		t.Fatalf("expected unmanaged pvc to remain unlabeled, got %q", pvc.Labels[managedByLabelKey])
+	}
+}
+
 func TestStartWorkloadRejectsReservedVolumeLabel(t *testing.T) {
 	clientset := fake.NewSimpleClientset()
 	server := New(Options{
