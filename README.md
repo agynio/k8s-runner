@@ -84,7 +84,7 @@ runtime Istio ingress gateway, and router underlay endpoints returned by
 endpoint/backend pod CIDRs through `backendCIDRs`, a namespace/pod selector,
 or a combination. Runtime `ziti.<base-domain>:443` resolves to
 the Istio ingress gateway so TLS passthrough can route SNI to the controller
-client service. This keeps `.ziti` application traffic on the overlay while
+client service. This keeps `.agyn` application traffic on the overlay while
 allowing only the underlay endpoints required for sidecar startup:
 
 ```yaml
