@@ -238,35 +238,31 @@ workloadEgressNetworkPolicy:
       kubernetes.io/metadata.name: ziti
     podSelector:
       app.kubernetes.io/name: ziti-workload-dns
-  # At least one entry is required while the policy is enabled: it excludes
-  # every private range, so without an allowance here a workload cannot reach
-  # the ziti controller it enrols against and no agent starts. The template
-  # fails rather than render a policy that severs the overlay.
+  # The policy excludes every private range, so without an allowance here a
+  # workload cannot reach the ziti controller it enrols against and no agent
+  # starts. The default reaches the control plane where this platform puts it;
+  # an installation whose ziti lives elsewhere replaces these entries.
   #
-  # port is the *pod's* port, not the Service's. A NetworkPolicy is evaluated
-  # after the Service DNAT, so naming the Service port matches nothing.
+  # No port is named on purpose. A NetworkPolicy is evaluated after the Service
+  # DNAT, so it matches the *pod's* port -- an implementation detail of the
+  # upstream ziti charts, which a version bump is free to change. Selecting the
+  # namespace alone cannot rot that way, and the namespace holds nothing a
+  # workload should be denied.
   zitiUnderlay:
-    endpoints: []
-    # Example:
-    # - name: controller
-    #   namespaceSelector:
-    #     kubernetes.io/metadata.name: ziti
-    #   port: 1280
-    # - name: router
-    #   namespaceSelector:
-    #     kubernetes.io/metadata.name: ziti
-    #   port: 3022
+    endpoints:
+      - name: ziti-control-plane
+        namespaceSelector:
+          kubernetes.io/metadata.name: ziti
+    # An entry may narrow itself to one port, at the cost of tracking what the
+    # ziti pods listen on: the controller's 1280 and the router's 3022, neither
+    # of which is the 2496 their Services publish.
+    #
     # - name: ingress-gateway
     #   cidr: ""
     #   backendCIDRs: []
     #   namespaceSelector: {}
     #   podSelector: {}
     #   port: 443
-    # - name: router
-    #   cidr: ""
-    #   namespaceSelector: {}
-    #   podSelector: {}
-    #   port: 2496
   # Deprecated compatibility alias. Prefer zitiUnderlay.endpoints.
   zitiControllerEnrollment:
     enabled: false
