@@ -120,9 +120,11 @@ spec:
               {{- toYaml . | nindent 14 }}
           {{- end }}
         {{- end }}
+      {{- with $endpoint.port }}
       ports:
         - protocol: TCP
-          port: {{ required (printf "workloadEgressNetworkPolicy.zitiUnderlay.endpoints[%s].port is required" (default "unnamed" $endpoint.name)) $endpoint.port }}
+          port: {{ . }}
+      {{- end }}
     {{- end }}
     - to:
         - ipBlock:
