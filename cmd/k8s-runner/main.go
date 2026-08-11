@@ -27,6 +27,7 @@ import (
 	"github.com/agynio/k8s-runner/internal/config"
 	"github.com/agynio/k8s-runner/internal/kube"
 	"github.com/agynio/k8s-runner/internal/logging"
+	"github.com/agynio/k8s-runner/internal/reporter"
 	"github.com/agynio/k8s-runner/internal/server"
 )
 
@@ -185,6 +186,19 @@ func run() error {
 			err := watchZitiIdentity(ctx, zitiContext.RefreshServices, zitiIdentityCheckInterval, zitiIdentityFailureThreshold, logger)
 			if err != nil {
 				errCh <- err
+			}
+		}()
+
+		// The platform used to discover a workload was running by dialing this
+		// runner on its reconcile interval and asking.
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			workloadReporter := reporter.New(kubeClient.Clientset, cfg.Namespace, gatewayClient, cfg.ServiceToken, logger)
+			if err := workloadReporter.Run(ctx); err != nil && ctx.Err() == nil {
+				// Not fatal: reconciliation still converges without it, so a
+				// runner that cannot report serves on and is late, not wrong.
+				logger.Warn("workload state reporting stopped", zap.Error(err))
 			}
 		}()
 	}
