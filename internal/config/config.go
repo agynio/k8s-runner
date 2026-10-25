@@ -34,6 +34,8 @@ type Config struct {
 	// Catalog is what this runner reports it offers. Declared in the runner's
 	// own configuration, since every entry needs an implementation here.
 	Catalog Catalog
+	// WorkloadPriorityClass is named on every workload Pod; empty leaves it unset.
+	WorkloadPriorityClass string
 }
 
 // CapabilityDocker is the capability name a workload asks for and the runner
@@ -109,6 +111,8 @@ func Load() (Config, error) {
 	}
 
 	cfg.LogLevel = normalizeLogLevel(readEnv("LOG_LEVEL", defaultLogLevel))
+
+	cfg.WorkloadPriorityClass = strings.TrimSpace(os.Getenv("WORKLOAD_PRIORITY_CLASS"))
 
 	capabilityConfig := strings.TrimSpace(os.Getenv("CAPABILITY_IMPLEMENTATIONS"))
 	if capabilityConfig != "" {

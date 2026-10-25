@@ -37,6 +37,7 @@ type Server struct {
 	catalog                   config.Catalog
 	logger                    *zap.Logger
 	capabilityImplementations config.CapabilityImplementations
+	workloadPriorityClass     string
 
 	execSessions   map[string]*execSession
 	execSessionsMu sync.Mutex
@@ -52,6 +53,7 @@ type Options struct {
 	Catalog                   config.Catalog
 	Logger                    *zap.Logger
 	CapabilityImplementations config.CapabilityImplementations
+	WorkloadPriorityClass     string
 }
 
 // New constructs a RunnerService server.
@@ -65,6 +67,7 @@ func New(options Options) *Server {
 		catalog:                   options.Catalog,
 		logger:                    options.Logger,
 		capabilityImplementations: options.CapabilityImplementations,
+		workloadPriorityClass:     options.WorkloadPriorityClass,
 		execSessions:              make(map[string]*execSession),
 	}
 }

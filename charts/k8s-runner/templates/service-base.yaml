@@ -1,4 +1,5 @@
 {{- include "k8s-runner.configureCatalog" . -}}
+{{- include "k8s-runner.configureWorkloadPriority" . -}}
 {{- $rbac := include "service-base.rbac" . -}}
 {{- $sa := include "service-base.serviceAccount" . -}}
 {{- $svc := include "service-base.service" . -}}

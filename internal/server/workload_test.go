@@ -354,6 +354,46 @@ func TestStartWorkloadUsesProvidedWorkloadID(t *testing.T) {
 	}
 }
 
+func TestStartWorkloadSetsPriorityClass(t *testing.T) {
+	tests := []struct {
+		name          string
+		priorityClass string
+	}{
+		{name: "configured", priorityClass: "agyn-workload"},
+		{name: "unset", priorityClass: ""},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			clientset := fake.NewSimpleClientset()
+			server := New(Options{
+				Clientset:             clientset,
+				Namespace:             "default",
+				StorageSize:           "1Gi",
+				Logger:                zap.NewNop(),
+				WorkloadPriorityClass: test.priorityClass,
+			})
+
+			ctx := context.Background()
+			workloadID := "5b0f8e1c-9a3d-4c62-8f71-2d4e6a9b0c13"
+			req := &runnerv1.StartWorkloadRequest{
+				WorkloadId: workloadID,
+				Main:       &runnerv1.ContainerSpec{Name: "main", Image: "busybox"},
+			}
+			if _, err := server.StartWorkload(ctx, req); err != nil {
+				t.Fatalf("StartWorkload returned error: %v", err)
+			}
+
+			pod, err := clientset.CoreV1().Pods("default").Get(ctx, podNameFromID(workloadID), metav1.GetOptions{})
+			if err != nil {
+				t.Fatalf("expected pod created: %v", err)
+			}
+			if pod.Spec.PriorityClassName != test.priorityClass {
+				t.Fatalf("expected priority class %q, got %q", test.priorityClass, pod.Spec.PriorityClassName)
+			}
+		})
+	}
+}
+
 func TestStartWorkloadRejectsInvalidWorkloadID(t *testing.T) {
 	clientset := fake.NewSimpleClientset()
 	server := New(Options{

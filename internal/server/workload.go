@@ -135,6 +135,8 @@ func (s *Server) StartWorkload(ctx context.Context, req *runnerv1.StartWorkloadR
 			// workload's in this shared namespace. Without this a workload
 			// with API access could read its neighbours'.
 			AutomountServiceAccountToken: ptr.To(false),
+			// Below the platform's priority, so a full node preempts workloads first.
+			PriorityClassName: s.workloadPriorityClass,
 		},
 	}
 	if hostUsers != nil {
