@@ -235,6 +235,14 @@ metrics:
 
 workloadNamespace: agyn-workloads
 
+# Workload Pods run below the default priority every other Pod gets, so a
+# restarting platform Pod preempts them instead of waiting behind them.
+# create: false names a class managed elsewhere; an empty name sets none.
+workloadPriorityClass:
+  create: true
+  name: agyn-workload
+  value: -1
+
 workloadEgressNetworkPolicy:
   enabled: true
   name: agent-workload-egress

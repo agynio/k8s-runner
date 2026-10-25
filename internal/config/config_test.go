@@ -70,6 +70,32 @@ func TestLoadGatewayAddressCustom(t *testing.T) {
 	}
 }
 
+func TestLoadWorkloadPriorityClass(t *testing.T) {
+	setBaseEnv(t)
+	t.Setenv("WORKLOAD_PRIORITY_CLASS", " agyn-workload ")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.WorkloadPriorityClass != "agyn-workload" {
+		t.Fatalf("expected workload priority class %q, got %q", "agyn-workload", cfg.WorkloadPriorityClass)
+	}
+}
+
+func TestLoadWorkloadPriorityClassUnset(t *testing.T) {
+	setBaseEnv(t)
+	unsetEnv(t, "WORKLOAD_PRIORITY_CLASS")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.WorkloadPriorityClass != "" {
+		t.Fatalf("expected no workload priority class, got %q", cfg.WorkloadPriorityClass)
+	}
+}
+
 func TestParseCapabilityImplementations(t *testing.T) {
 	tests := []struct {
 		name        string

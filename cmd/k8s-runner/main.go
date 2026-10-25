@@ -80,6 +80,7 @@ func run() error {
 			Catalog:                   cfg.Catalog,
 			Logger:                    logger,
 			CapabilityImplementations: cfg.CapabilityImplementations,
+			WorkloadPriorityClass:     cfg.WorkloadPriorityClass,
 		}),
 	)
 
