@@ -1,12 +1,15 @@
 package reporter
 
 import (
+	"context"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/tools/cache"
 
-	runnersv1 "github.com/agynio/k8s-runner/internal/.gen/agynio/api/runners/v1"
+	"github.com/agynio/runner-core/backend"
+	runnersv1 "github.com/agynio/runner-core/gen/agynio/api/runners/v1"
 )
 
 func podWith(phase corev1.PodPhase, ready corev1.ConditionStatus) *corev1.Pod {
@@ -49,30 +52,46 @@ func TestWorkloadStatusStaysSilentOnEverythingElse(t *testing.T) {
 	}
 }
 
-// Every Pod update and every resync re-delivers the same object. Without this
-// the runner would resend a state the platform already has, on a timer.
-func TestChangedSuppressesARepeatOfTheSameStatus(t *testing.T) {
-	r := New(nil, "ns", nil, "token", nil)
+type recordingObserver struct {
+	observed  []backend.Observation
+	forgotten []string
+}
 
-	if !r.changed("workload-1", runnersv1.WorkloadStatus_WORKLOAD_STATUS_RUNNING) {
-		t.Fatal("expected the first observation to be reported")
+func (o *recordingObserver) Observe(_ context.Context, observation backend.Observation) {
+	o.observed = append(o.observed, observation)
+}
+
+func (o *recordingObserver) Forget(workloadID string) {
+	o.forgotten = append(o.forgotten, workloadID)
+}
+
+// What the informer delivers reaches runner-core's reporter keyed by the
+// workload id on the Pod, and only once the Pod says something worth sending.
+func TestObserveHandsReadyPodsToTheObserver(t *testing.T) {
+	observer := &recordingObserver{}
+
+	observe(context.Background(), podWith(corev1.PodPending, corev1.ConditionFalse), observer)
+	observe(context.Background(), podWith(corev1.PodRunning, corev1.ConditionTrue), observer)
+	observe(context.Background(), &corev1.Pod{Status: corev1.PodStatus{Phase: corev1.PodRunning}}, observer)
+
+	if len(observer.observed) != 1 {
+		t.Fatalf("expected one observation, got %v", observer.observed)
 	}
-	if r.changed("workload-1", runnersv1.WorkloadStatus_WORKLOAD_STATUS_RUNNING) {
-		t.Fatal("expected a repeat of the same status to be suppressed")
-	}
-	if !r.changed("workload-1", runnersv1.WorkloadStatus_WORKLOAD_STATUS_FAILED) {
-		t.Fatal("expected a different status to be reported")
+	if got := observer.observed[0]; got.WorkloadID != "workload-1" || got.Status != runnersv1.WorkloadStatus_WORKLOAD_STATUS_RUNNING {
+		t.Fatalf("unexpected observation %+v", got)
 	}
 }
 
-// A workload restarted under the same id must report again from scratch.
-func TestForgetClearsTheRememberedStatus(t *testing.T) {
-	r := New(nil, "ns", nil, "token", nil)
-	r.changed("workload-1", runnersv1.WorkloadStatus_WORKLOAD_STATUS_RUNNING)
+// A deletion the informer only learned about on relist arrives as a tombstone
+// and must still clear the workload.
+func TestForgetUnwrapsTombstones(t *testing.T) {
+	observer := &recordingObserver{}
 
-	r.forget(podWith(corev1.PodRunning, corev1.ConditionTrue))
+	forget(podWith(corev1.PodRunning, corev1.ConditionTrue), observer)
+	forget(cache.DeletedFinalStateUnknown{Key: "ns/pod", Obj: podWith(corev1.PodFailed, corev1.ConditionFalse)}, observer)
+	forget("not a pod", observer)
 
-	if !r.changed("workload-1", runnersv1.WorkloadStatus_WORKLOAD_STATUS_RUNNING) {
-		t.Fatal("expected a forgotten workload to report again")
+	if len(observer.forgotten) != 2 || observer.forgotten[0] != "workload-1" || observer.forgotten[1] != "workload-1" {
+		t.Fatalf("expected the workload forgotten twice, got %v", observer.forgotten)
 	}
 }

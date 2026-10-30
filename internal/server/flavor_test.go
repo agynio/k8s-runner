@@ -6,8 +6,8 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 
-	runnerv1 "github.com/agynio/k8s-runner/internal/.gen/agynio/api/runner/v1"
 	"github.com/agynio/k8s-runner/internal/config"
+	runnerv1 "github.com/agynio/runner-core/gen/agynio/api/runner/v1"
 )
 
 func testCatalog() config.Catalog {

@@ -2,10 +2,9 @@ package config
 
 import (
 	"fmt"
-	"os"
 	"strings"
 
-	"gopkg.in/yaml.v3"
+	"github.com/agynio/runner-core/catalog"
 )
 
 // Catalog is what this runner offers: the compute sizes, storage tiers and
@@ -13,6 +12,9 @@ import (
 // because every entry needs a runner-side implementation anyway — a flavor is
 // only real if this runner can allocate those resources, and a storage class is
 // only real if it maps to a StorageClass in this cluster.
+//
+// The platform sees the names and sizes (Reported); the Kubernetes mapping
+// behind each entry stays here.
 type Catalog struct {
 	Flavors        []FlavorEntry       `yaml:"flavors"`
 	StorageClasses []StorageClassEntry `yaml:"storageClasses"`
@@ -30,31 +32,8 @@ type FlavorEntry struct {
 	SidecarResources ComputeResources `yaml:"sidecarResources"`
 }
 
-type ComputeResources struct {
-	RequestsCPU    string `yaml:"requestsCpu"`
-	RequestsMemory string `yaml:"requestsMemory"`
-	LimitsCPU      string `yaml:"limitsCpu"`
-	LimitsMemory   string `yaml:"limitsMemory"`
-}
-
-// IsZero reports whether nothing at all was declared.
-func (r ComputeResources) IsZero() bool {
-	for _, value := range r.fields() {
-		if strings.TrimSpace(value) != "" {
-			return false
-		}
-	}
-	return true
-}
-
-func (r ComputeResources) fields() map[string]string {
-	return map[string]string{
-		"requestsCpu":    r.RequestsCPU,
-		"requestsMemory": r.RequestsMemory,
-		"limitsCpu":      r.LimitsCPU,
-		"limitsMemory":   r.LimitsMemory,
-	}
-}
+// ComputeResources is a size as the platform understands it.
+type ComputeResources = catalog.ComputeResources
 
 type StorageClassEntry struct {
 	Name string `yaml:"name"`
@@ -69,84 +48,63 @@ type StorageClassEntry struct {
 // runner with no declared catalog reports nothing and simply offers no named
 // entries.
 func LoadCatalog(path string) (Catalog, error) {
-	path = strings.TrimSpace(path)
-	if path == "" {
-		return Catalog{}, nil
+	var declared Catalog
+	if err := catalog.LoadFile(path, &declared); err != nil {
+		return Catalog{}, err
 	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return Catalog{}, nil
-		}
-		return Catalog{}, fmt.Errorf("read catalog %s: %w", path, err)
+	if err := declared.validate(); err != nil {
+		return Catalog{}, fmt.Errorf("catalog %s: %w", strings.TrimSpace(path), err)
 	}
-	var catalog Catalog
-	if err := yaml.Unmarshal(data, &catalog); err != nil {
-		return Catalog{}, fmt.Errorf("parse catalog %s: %w", path, err)
-	}
-	if err := catalog.validate(); err != nil {
-		return Catalog{}, fmt.Errorf("catalog %s: %w", path, err)
-	}
-	return catalog, nil
+	return declared, nil
 }
 
 // validate catches locally what the platform would reject anyway, so a bad
 // configuration fails at startup with a clear message instead of as a rejected
-// report.
+// report. The platform-facing part is runner-core's check; the sidecar budget
+// is this runner's own.
 func (c Catalog) validate() error {
-	flavorNames := map[string]struct{}{}
-	defaults := 0
+	if err := c.Reported().Validate(); err != nil {
+		return err
+	}
 	for _, flavor := range c.Flavors {
-		name := strings.TrimSpace(flavor.Name)
-		if name == "" {
-			return fmt.Errorf("flavor name is empty")
-		}
-		if _, exists := flavorNames[name]; exists {
-			return fmt.Errorf("flavor %q is declared more than once", name)
-		}
-		flavorNames[name] = struct{}{}
-		if flavor.Default {
-			defaults++
-		}
-		for field, value := range flavor.Resources.fields() {
-			if strings.TrimSpace(value) == "" {
-				return fmt.Errorf("flavor %q: %s is empty", name, field)
-			}
-		}
 		// Sidecar sizing is opt-in, but half of it is a typo rather than a
 		// choice: a flavor that sets two of the four would silently size
 		// sidecars by a budget nobody wrote.
-		if !flavor.SidecarResources.IsZero() {
-			for field, value := range flavor.SidecarResources.fields() {
-				if strings.TrimSpace(value) == "" {
-					return fmt.Errorf("flavor %q: sidecarResources.%s is empty", name, field)
-				}
-			}
+		if flavor.SidecarResources.IsZero() {
+			continue
 		}
-	}
-	if defaults > 1 {
-		return fmt.Errorf("at most one flavor may be default, got %d", defaults)
-	}
-
-	classNames := map[string]struct{}{}
-	classDefaults := 0
-	for _, class := range c.StorageClasses {
-		name := strings.TrimSpace(class.Name)
-		if name == "" {
-			return fmt.Errorf("storage class name is empty")
+		if field, missing := flavor.SidecarResources.MissingField(); missing {
+			return fmt.Errorf("flavor %q: sidecarResources.%s is empty", strings.TrimSpace(flavor.Name), field)
 		}
-		if _, exists := classNames[name]; exists {
-			return fmt.Errorf("storage class %q is declared more than once", name)
-		}
-		classNames[name] = struct{}{}
-		if class.Default {
-			classDefaults++
-		}
-	}
-	if classDefaults > 1 {
-		return fmt.Errorf("at most one storage class may be default, got %d", classDefaults)
 	}
 	return nil
+}
+
+// Reported is the platform-facing view of this catalog: the entries by name
+// and size, without the Kubernetes mapping behind each one.
+func (c Catalog) Reported() catalog.Catalog {
+	flavors := make([]catalog.Flavor, 0, len(c.Flavors))
+	for _, flavor := range c.Flavors {
+		flavors = append(flavors, catalog.Flavor{
+			Name:       flavor.Name,
+			Default:    flavor.Default,
+			Deprecated: flavor.Deprecated,
+			Resources:  flavor.Resources,
+		})
+	}
+	storageClasses := make([]catalog.StorageClass, 0, len(c.StorageClasses))
+	for _, class := range c.StorageClasses {
+		storageClasses = append(storageClasses, catalog.StorageClass{
+			Name:       class.Name,
+			Default:    class.Default,
+			Deprecated: class.Deprecated,
+		})
+	}
+	return catalog.Catalog{
+		Flavors:        flavors,
+		StorageClasses: storageClasses,
+		Capabilities:   c.Capabilities,
+	}
 }
 
 // FlavorFor maps a catalog entry name to the sizes backing it. An unknown name

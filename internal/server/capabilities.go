@@ -8,8 +8,8 @@ import (
 	"google.golang.org/grpc/status"
 	corev1 "k8s.io/api/core/v1"
 
-	runnerv1 "github.com/agynio/k8s-runner/internal/.gen/agynio/api/runner/v1"
 	"github.com/agynio/k8s-runner/internal/config"
+	runnerv1 "github.com/agynio/runner-core/gen/agynio/api/runner/v1"
 )
 
 const (

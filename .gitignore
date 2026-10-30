@@ -7,9 +7,6 @@ bin/
 coverage/
 dist/
 
-# Generated code
-internal/.gen/
-
 # Editor
 .DS_Store
 *.swp

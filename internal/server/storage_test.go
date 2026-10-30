@@ -13,7 +13,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes/fake"
 
-	runnerv1 "github.com/agynio/k8s-runner/internal/.gen/agynio/api/runner/v1"
+	runnerv1 "github.com/agynio/runner-core/gen/agynio/api/runner/v1"
 )
 
 func storageServer(t *testing.T, objects ...runtime.Object) (*Server, *fake.Clientset) {

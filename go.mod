@@ -3,12 +3,11 @@ module github.com/agynio/k8s-runner
 go 1.25.0
 
 require (
+	github.com/agynio/runner-core v0.0.0-20261030225440-ee50fe63df20
 	github.com/google/uuid v1.6.0
-	github.com/openziti/sdk-golang v1.6.0
 	go.uber.org/zap v1.27.1
 	google.golang.org/grpc v1.67.0
 	google.golang.org/protobuf v1.36.11
-	gopkg.in/yaml.v3 v3.0.1
 	k8s.io/api v0.30.3
 	k8s.io/apimachinery v0.30.3
 	k8s.io/client-go v0.30.3
@@ -82,6 +81,7 @@ require (
 	github.com/openziti/foundation/v2 v2.0.90 // indirect
 	github.com/openziti/identity v1.0.128 // indirect
 	github.com/openziti/metrics v1.4.5 // indirect
+	github.com/openziti/sdk-golang v1.6.0 // indirect
 	github.com/openziti/secretstream v0.1.49 // indirect
 	github.com/openziti/transport/v2 v2.0.215 // indirect
 	github.com/orcaman/concurrent-map/v2 v2.0.1 // indirect
@@ -117,6 +117,7 @@ require (
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20240814211410-ddb44dafa142 // indirect
 	gopkg.in/inf.v0 v0.9.1 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
+	gopkg.in/yaml.v3 v3.0.1 // indirect
 	k8s.io/klog/v2 v2.120.1 // indirect
 	k8s.io/kube-openapi v0.0.0-20240228011516-70dd3763d340 // indirect
 	nhooyr.io/websocket v1.8.17 // indirect

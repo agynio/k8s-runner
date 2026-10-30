@@ -15,7 +15,7 @@ functions:
        "value": "/opt/app/data"},
 
       {"op": "add", "path": "/spec/template/spec/containers/0/command",
-       "value": ["sh", "-c", "set -eu; elapsed=0; while [ ! -f /opt/app/data/go.mod ] || [ ! -f /opt/app/data/buf.gen.yaml ] || [ ! -f /opt/app/data/cmd/k8s-runner/main.go ]; do sleep 1; elapsed=$((elapsed + 1)); [ $elapsed -ge 120 ] && exit 1; done; echo Generating protobuf types...; buf generate --include-imports --template /opt/app/data/buf.gen.yaml -o /opt/app/data; cd /opt/app/data; echo Tidying Go modules...; go mod tidy; echo Starting k8s-runner...; go build -o /tmp/k8s-runner ./cmd/k8s-runner && exec /tmp/k8s-runner"]},
+       "value": ["sh", "-c", "set -eu; elapsed=0; while [ ! -f /opt/app/data/go.mod ] || [ ! -f /opt/app/data/cmd/k8s-runner/main.go ]; do sleep 1; elapsed=$((elapsed + 1)); [ $elapsed -ge 120 ] && exit 1; done; cd /opt/app/data; echo Tidying Go modules...; go mod tidy; echo Starting k8s-runner...; go build -o /tmp/k8s-runner ./cmd/k8s-runner && exec /tmp/k8s-runner"]},
 
       {"op": "add", "path": "/spec/template/spec/containers/0/volumeMounts",
        "value": [{"name": "data", "mountPath": "/opt/app/data"}]},
@@ -152,17 +152,14 @@ dev:
             excludePaths:
               - .git/
               - .devspace/
-              - /internal/.gen/
               - /tmp/
             uploadExcludePaths:
               - .git/
               - .devspace/
-              - /internal/.gen/
               - /tmp/
             downloadExcludePaths:
               - .git/
               - .devspace/
-              - /internal/.gen/
               - /tmp/
         logs:
           enabled: true
@@ -182,17 +179,14 @@ dev:
             excludePaths:
               - .git/
               - .devspace/
-              - /internal/.gen/
               - /tmp/
               - /bootstrap/
             uploadExcludePaths:
               - .git/
               - .devspace/
-              - /internal/.gen/
               - /tmp/
               - /bootstrap/
             downloadExcludePaths:
               - .git/
               - .devspace/
-              - /internal/.gen/
               - /tmp/

@@ -13,7 +13,7 @@ import (
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/tools/remotecommand"
 
-	runnerv1 "github.com/agynio/k8s-runner/internal/.gen/agynio/api/runner/v1"
+	runnerv1 "github.com/agynio/runner-core/gen/agynio/api/runner/v1"
 )
 
 func (s *Server) PutArchive(ctx context.Context, req *runnerv1.PutArchiveRequest) (*runnerv1.PutArchiveResponse, error) {
