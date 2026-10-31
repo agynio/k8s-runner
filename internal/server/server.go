@@ -2,14 +2,15 @@ package server
 
 import (
 	"context"
-	"sync"
 
 	"go.uber.org/zap"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 
-	runnerv1 "github.com/agynio/k8s-runner/internal/.gen/agynio/api/runner/v1"
+	"github.com/agynio/runner-core/backend"
+
 	"github.com/agynio/k8s-runner/internal/config"
+	"github.com/agynio/k8s-runner/internal/reporter"
 )
 
 const (
@@ -26,9 +27,10 @@ const (
 	touchedAtAnnotationKey      = "agyn.io/touched-at"
 )
 
-// Server implements the RunnerService gRPC API against the Kubernetes API.
+// Server is the Kubernetes backend of the RunnerService gRPC API. runner-core
+// serves the RPCs and calls it for everything that touches a Pod, a
+// PersistentVolumeClaim or a Secret.
 type Server struct {
-	runnerv1.UnimplementedRunnerServiceServer
 	clientset                 kubernetes.Interface
 	restConfig                *rest.Config
 	namespace                 string
@@ -38,10 +40,9 @@ type Server struct {
 	logger                    *zap.Logger
 	capabilityImplementations config.CapabilityImplementations
 	workloadPriorityClass     string
-
-	execSessions   map[string]*execSession
-	execSessionsMu sync.Mutex
 }
+
+var _ backend.Backend = (*Server)(nil)
 
 // Options defines required inputs for constructing a Server.
 type Options struct {
@@ -56,7 +57,7 @@ type Options struct {
 	WorkloadPriorityClass     string
 }
 
-// New constructs a RunnerService server.
+// New constructs the Kubernetes backend.
 func New(options Options) *Server {
 	return &Server{
 		clientset:                 options.Clientset,
@@ -68,10 +69,11 @@ func New(options Options) *Server {
 		logger:                    options.Logger,
 		capabilityImplementations: options.CapabilityImplementations,
 		workloadPriorityClass:     options.WorkloadPriorityClass,
-		execSessions:              make(map[string]*execSession),
 	}
 }
 
-func (s *Server) Ready(_ context.Context, _ *runnerv1.ReadyRequest) (*runnerv1.ReadyResponse, error) {
-	return &runnerv1.ReadyResponse{Status: "ok"}, nil
+// WatchWorkloadState hands every transition of the Pods this runner manages
+// to observer until ctx ends.
+func (s *Server) WatchWorkloadState(ctx context.Context, observer backend.Observer) error {
+	return reporter.Watch(ctx, s.clientset, s.namespace, observer)
 }

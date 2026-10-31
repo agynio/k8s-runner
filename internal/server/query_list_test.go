@@ -9,7 +9,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
 
-	runnerv1 "github.com/agynio/k8s-runner/internal/.gen/agynio/api/runner/v1"
+	runnerv1 "github.com/agynio/runner-core/gen/agynio/api/runner/v1"
 )
 
 func TestListWorkloadsReturnsLabeledPods(t *testing.T) {

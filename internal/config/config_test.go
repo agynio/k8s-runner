@@ -4,6 +4,8 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	coreconfig "github.com/agynio/runner-core/config"
 )
 
 func TestLoadZitiEnrollmentTimeoutDefault(t *testing.T) {
@@ -15,8 +17,8 @@ func TestLoadZitiEnrollmentTimeoutDefault(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if cfg.ZitiEnrollmentTimeout != defaultZitiEnrollmentTimeout {
-		t.Fatalf("expected ziti enrollment timeout %s, got %s", defaultZitiEnrollmentTimeout, cfg.ZitiEnrollmentTimeout)
+	if cfg.ZitiEnrollmentTimeout != coreconfig.DefaultZitiEnrollmentTimeout {
+		t.Fatalf("expected ziti enrollment timeout %s, got %s", coreconfig.DefaultZitiEnrollmentTimeout, cfg.ZitiEnrollmentTimeout)
 	}
 }
 
@@ -51,8 +53,8 @@ func TestLoadGatewayAddressDefault(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if cfg.GatewayAddress != defaultGatewayAddress {
-		t.Fatalf("expected gateway address %s, got %s", defaultGatewayAddress, cfg.GatewayAddress)
+	if cfg.GatewayAddress != coreconfig.DefaultGatewayAddress {
+		t.Fatalf("expected gateway address %s, got %s", coreconfig.DefaultGatewayAddress, cfg.GatewayAddress)
 	}
 }
 
@@ -175,11 +177,11 @@ func TestParseCapabilityImplementations(t *testing.T) {
 func setBaseEnv(t *testing.T) {
 	t.Helper()
 	t.Setenv("KUBE_NAMESPACE", "test-namespace")
-	t.Setenv("GRPC_ADDR", defaultGRPCAddr)
+	t.Setenv("GRPC_ADDR", coreconfig.DefaultGRPCAddr)
 	t.Setenv("PVC_STORAGE_SIZE", defaultStorageSize)
 	t.Setenv("PVC_STORAGE_CLASS", "")
-	t.Setenv("LOG_LEVEL", defaultLogLevel)
-	t.Setenv("GATEWAY_ADDRESS", defaultGatewayAddress)
+	t.Setenv("LOG_LEVEL", coreconfig.DefaultLogLevel)
+	t.Setenv("GATEWAY_ADDRESS", coreconfig.DefaultGatewayAddress)
 	t.Setenv("SERVICE_TOKEN", "test-service-token")
 }
 

@@ -12,35 +12,19 @@ import (
 // docker was configured and working, the catalog said nothing, and the
 // Orchestrator refused to place any agent that asked for it -- "no eligible
 // runners found (required capabilities: [docker])".
-func TestCatalogCapabilitiesReportsConfiguredDocker(t *testing.T) {
+func TestImplementedCapabilitiesReportsConfiguredDocker(t *testing.T) {
 	cfg := config.Config{CapabilityImplementations: config.CapabilityImplementations{
 		Docker: config.DockerImplementationRootless,
 	}}
 
-	if got := catalogCapabilities(cfg); !reflect.DeepEqual(got, []string{"docker"}) {
+	if got := implementedCapabilities(cfg); !reflect.DeepEqual(got, []string{"docker"}) {
 		t.Fatalf("expected [docker], got %v", got)
 	}
 }
 
 // Without an implementation the runner cannot serve it, so it must not claim it.
-func TestCatalogCapabilitiesOmitsUnconfiguredDocker(t *testing.T) {
-	if got := catalogCapabilities(config.Config{}); len(got) != 0 {
+func TestImplementedCapabilitiesOmitsUnconfiguredDocker(t *testing.T) {
+	if got := implementedCapabilities(config.Config{}); len(got) != 0 {
 		t.Fatalf("expected no capabilities, got %v", got)
-	}
-}
-
-// The catalog entry still stands on its own, so an operator can advertise
-// something ahead of the implementation, and listing docker there as well does
-// not report it twice.
-func TestCatalogCapabilitiesMergesTheCatalogEntry(t *testing.T) {
-	cfg := config.Config{
-		Catalog: config.Catalog{Capabilities: []string{"docker", " gpu "}},
-		CapabilityImplementations: config.CapabilityImplementations{
-			Docker: config.DockerImplementationPrivileged,
-		},
-	}
-
-	if got := catalogCapabilities(cfg); !reflect.DeepEqual(got, []string{"docker", "gpu"}) {
-		t.Fatalf("expected [docker gpu], got %v", got)
 	}
 }

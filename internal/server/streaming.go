@@ -3,7 +3,6 @@ package server
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -19,28 +18,22 @@ import (
 	"k8s.io/apimachinery/pkg/watch"
 	"k8s.io/client-go/kubernetes"
 
-	runnerv1 "github.com/agynio/k8s-runner/internal/.gen/agynio/api/runner/v1"
+	runnerv1 "github.com/agynio/runner-core/gen/agynio/api/runner/v1"
 )
 
-func (s *Server) StreamWorkloadLogs(req *runnerv1.StreamWorkloadLogsRequest, stream runnerv1.RunnerService_StreamWorkloadLogsServer) error {
+// OpenWorkloadLogs opens the Pod log stream runner-core reads onto the wire,
+// with the request's tail, since and follow options applied.
+func (s *Server) OpenWorkloadLogs(ctx context.Context, req *runnerv1.StreamWorkloadLogsRequest) (io.ReadCloser, error) {
 	workloadID := strings.TrimSpace(req.GetWorkloadId())
-	if workloadID == "" {
-		return status.Error(codes.InvalidArgument, "workload_id_required")
-	}
 	containerName := strings.TrimSpace(req.GetContainerName())
-	if containerName == "" {
-		return status.Error(codes.InvalidArgument, "container_name_required")
-	}
-
 	podName := podNameFromID(workloadID)
-	ctx := stream.Context()
 
 	pod, err := s.clientset.CoreV1().Pods(s.namespace).Get(ctx, podName, metav1.GetOptions{})
 	if err != nil {
-		return grpcErrorFromKube(s.logger, err, codes.Internal)
+		return nil, grpcErrorFromKube(s.logger, err, codes.Internal)
 	}
 	if !podHasContainer(pod, containerName) {
-		return status.Error(codes.NotFound, "container_not_found")
+		return nil, status.Error(codes.NotFound, "container_not_found")
 	}
 
 	options := &corev1.PodLogOptions{
@@ -65,39 +58,19 @@ func (s *Server) StreamWorkloadLogs(req *runnerv1.StreamWorkloadLogsRequest, str
 
 	logStream, err := s.clientset.CoreV1().Pods(s.namespace).GetLogs(podName, options).Stream(ctx)
 	if err != nil {
-		return grpcErrorFromKube(s.logger, err, codes.Internal)
+		return nil, grpcErrorFromKube(s.logger, err, codes.Internal)
 	}
-	defer logStream.Close()
+	return logStream, nil
+}
 
-	const logReadBufferSize = 4096
-	buf := make([]byte, logReadBufferSize)
-	for {
-		n, readErr := logStream.Read(buf)
-		if n > 0 {
-			chunk := append([]byte(nil), buf[:n]...)
-			resp := &runnerv1.StreamWorkloadLogsResponse{
-				Event: &runnerv1.StreamWorkloadLogsResponse_Chunk{
-					Chunk: &runnerv1.LogChunk{
-						Data: chunk,
-						Ts:   timestamppb.New(time.Now().UTC()),
-					},
-				},
-			}
-			if err := stream.Send(resp); err != nil {
-				return err
-			}
-		}
-		if readErr != nil {
-			if ctx.Err() != nil {
-				return nil
-			}
-			podAlive, err := podExists(ctx, s.clientset, s.namespace, podName)
-			if err != nil {
-				return grpcErrorFromKube(s.logger, err, codes.Internal)
-			}
-			return logReadError(readErr, podAlive)
-		}
+// WorkloadExists is how runner-core tells a container that finished from a
+// Pod deleted mid-stream.
+func (s *Server) WorkloadExists(ctx context.Context, workloadID string) (bool, error) {
+	podAlive, err := podExists(ctx, s.clientset, s.namespace, podNameFromID(workloadID))
+	if err != nil {
+		return false, grpcErrorFromKube(s.logger, err, codes.Internal)
 	}
+	return podAlive, nil
 }
 
 func podExists(ctx context.Context, clientset kubernetes.Interface, namespace, name string) (bool, error) {
@@ -125,16 +98,6 @@ func podHasContainer(pod *corev1.Pod, name string) bool {
 		}
 	}
 	return false
-}
-
-func logReadError(readErr error, podAlive bool) error {
-	if !podAlive {
-		return status.Error(codes.Unavailable, "pod_deleted")
-	}
-	if errors.Is(readErr, io.EOF) {
-		return nil
-	}
-	return status.Error(codes.Internal, "logs_stream_error")
 }
 
 func (s *Server) StreamEvents(req *runnerv1.StreamEventsRequest, stream runnerv1.RunnerService_StreamEventsServer) error {

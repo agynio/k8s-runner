@@ -1,4 +1,5 @@
-// Package reporter tells the platform what the runner sees.
+// Package reporter watches the Pods this runner manages and hands every
+// transition to runner-core's reporter, which tells the platform.
 //
 // The platform used to ask. The Agents Orchestrator dialed the runner on its
 // reconcile interval and called InspectWorkload, so a workload was ready and
@@ -10,7 +11,6 @@ package reporter
 import (
 	"context"
 	"strings"
-	"sync"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -19,68 +19,36 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/cache"
 
-	gatewayv1 "github.com/agynio/k8s-runner/internal/.gen/agynio/api/gateway/v1"
-	runnersv1 "github.com/agynio/k8s-runner/internal/.gen/agynio/api/runners/v1"
-	"go.uber.org/zap"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
-	"google.golang.org/protobuf/types/known/timestamppb"
+	"github.com/agynio/runner-core/backend"
+	runnersv1 "github.com/agynio/runner-core/gen/agynio/api/runners/v1"
 )
 
 // WorkloadIDLabel is set by this runner when it creates the Pod, so a Pod maps
 // to a workload record with no lookup.
 const WorkloadIDLabel = "agyn.io/workload-id"
 
-const (
-	resyncInterval = 30 * time.Second
-	reportTimeout  = 10 * time.Second
-	retryBackoff   = time.Second
-	retryAttempts  = 3
-)
+const resyncInterval = 30 * time.Second
 
-type Reporter struct {
-	clientset    kubernetes.Interface
-	namespace    string
-	gateway      gatewayv1.RunnersGatewayClient
-	serviceToken string
-	logger       *zap.Logger
-
-	// reported is the last status sent per workload, so a resync or an
-	// unrelated Pod update does not resend what the platform already has.
-	mu       sync.Mutex
-	reported map[string]runnersv1.WorkloadStatus
-}
-
-func New(clientset kubernetes.Interface, namespace string, gateway gatewayv1.RunnersGatewayClient, serviceToken string, logger *zap.Logger) *Reporter {
-	return &Reporter{
-		clientset:    clientset,
-		namespace:    namespace,
-		gateway:      gateway,
-		serviceToken: serviceToken,
-		logger:       logger,
-		reported:     map[string]runnersv1.WorkloadStatus{},
-	}
-}
-
-// Run watches the workload Pods in this runner's namespace until ctx ends.
+// Watch follows the workload Pods in namespace until ctx ends, handing what
+// it sees to observer.
 //
 // An informer rather than a bare watch for its two recovery properties: it
 // reconnects when the API server drops the watch, and it re-lists on resync, so
 // a transition missed during a disconnect is re-derived rather than lost.
-func (r *Reporter) Run(ctx context.Context) error {
+func Watch(ctx context.Context, clientset kubernetes.Interface, namespace string, observer backend.Observer) error {
 	factory := informers.NewSharedInformerFactoryWithOptions(
-		r.clientset,
+		clientset,
 		resyncInterval,
-		informers.WithNamespace(r.namespace),
+		informers.WithNamespace(namespace),
 		informers.WithTweakListOptions(func(options *metav1.ListOptions) {
 			options.LabelSelector = WorkloadIDLabel
 		}),
 	)
 	pods := factory.Core().V1().Pods().Informer()
 	if _, err := pods.AddEventHandler(cache.ResourceEventHandlerFuncs{
-		AddFunc:    func(obj any) { r.observe(ctx, obj) },
-		UpdateFunc: func(_, obj any) { r.observe(ctx, obj) },
-		DeleteFunc: r.forget,
+		AddFunc:    func(obj any) { observe(ctx, obj, observer) },
+		UpdateFunc: func(_, obj any) { observe(ctx, obj, observer) },
+		DeleteFunc: func(obj any) { forget(obj, observer) },
 	}); err != nil {
 		return err
 	}
@@ -90,10 +58,10 @@ func (r *Reporter) Run(ctx context.Context) error {
 	return ctx.Err()
 }
 
-// observe reports a Pod's runtime state when it is one the platform does not
-// already have. Anything that is neither running nor failed is a transition in
-// progress and says nothing worth sending.
-func (r *Reporter) observe(ctx context.Context, obj any) {
+// observe hands a Pod's runtime state to the observer. Anything that is
+// neither running nor failed is a transition in progress and says nothing
+// worth sending.
+func observe(ctx context.Context, obj any, observer backend.Observer) {
 	pod, ok := obj.(*corev1.Pod)
 	if !ok {
 		return
@@ -106,10 +74,7 @@ func (r *Reporter) observe(ctx context.Context, obj any) {
 	if !ok {
 		return
 	}
-	if !r.changed(workloadID, observed) {
-		return
-	}
-	r.report(ctx, workloadID, observed)
+	observer.Observe(ctx, backend.Observation{WorkloadID: workloadID, Status: observed})
 }
 
 // forget drops a deleted Pod's last reported status so a workload restarted
@@ -118,7 +83,7 @@ func (r *Reporter) observe(ctx context.Context, obj any) {
 // Deliberately reports nothing itself. A deleted Pod means the workload is gone,
 // and ending a workload is the platform's decision -- the Orchestrator's
 // reconciliation notices the absence and settles what it means.
-func (r *Reporter) forget(obj any) {
+func forget(obj any, observer backend.Observer) {
 	pod, ok := obj.(*corev1.Pod)
 	if !ok {
 		if tombstone, isTombstone := obj.(cache.DeletedFinalStateUnknown); isTombstone {
@@ -132,66 +97,7 @@ func (r *Reporter) forget(obj any) {
 	if workloadID == "" {
 		return
 	}
-	r.mu.Lock()
-	delete(r.reported, workloadID)
-	r.mu.Unlock()
-}
-
-func (r *Reporter) changed(workloadID string, observed runnersv1.WorkloadStatus) bool {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if last, ok := r.reported[workloadID]; ok && last == observed {
-		return false
-	}
-	r.reported[workloadID] = observed
-	return true
-}
-
-// report is best-effort. A failure is retried a few times and then dropped: the
-// Orchestrator's reconciliation is the backstop, so a runner that cannot report
-// is behind on latency, not on correctness.
-func (r *Reporter) report(ctx context.Context, workloadID string, observed runnersv1.WorkloadStatus) {
-	observedAt := timestamppb.Now()
-	for attempt := 0; attempt < retryAttempts; attempt++ {
-		callCtx, cancel := context.WithTimeout(ctx, reportTimeout)
-		_, err := r.gateway.ReportWorkloadState(callCtx, &runnersv1.ReportWorkloadStateRequest{
-			ServiceToken: r.serviceToken,
-			WorkloadId:   workloadID,
-			Status:       observed,
-			ObservedAt:   observedAt,
-		})
-		cancel()
-		if err == nil {
-			return
-		}
-		if ctx.Err() != nil {
-			return
-		}
-		// A platform older than this RPC answers Unimplemented. It reconciles on
-		// its own interval exactly as it always did, so the runner keeps serving
-		// and simply stops trying to help.
-		if status.Code(err) == codes.Unimplemented {
-			r.logger.Info("platform does not accept workload state reports; leaving it to reconciliation")
-			return
-		}
-		if attempt == retryAttempts-1 {
-			r.logger.Warn("report workload state",
-				zap.String("workload_id", workloadID),
-				zap.String("status", observed.String()),
-				zap.Error(err))
-			// Forgotten so the next observation retries rather than being
-			// suppressed as already reported.
-			r.mu.Lock()
-			delete(r.reported, workloadID)
-			r.mu.Unlock()
-			return
-		}
-		select {
-		case <-ctx.Done():
-			return
-		case <-time.After(retryBackoff << attempt):
-		}
-	}
+	observer.Forget(workloadID)
 }
 
 // workloadStatus reads the runtime state a Pod is in.

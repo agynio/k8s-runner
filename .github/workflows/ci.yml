@@ -27,12 +27,6 @@ jobs:
       - name: Verify Helm chart
         run: scripts/verify-workload-egress-networkpolicy.sh
 
-      - name: Install buf
-        uses: bufbuild/buf-setup-action@v1
-
-      - name: Generate protobuf bindings
-        run: buf generate --include-imports
-
       - name: Run tests
         run: go test ./...
 

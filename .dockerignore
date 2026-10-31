@@ -3,5 +3,4 @@
 .github/
 charts/
 tmp/
-internal/.gen/
 *.md
