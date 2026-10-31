@@ -3,7 +3,7 @@ module github.com/agynio/k8s-runner
 go 1.25.0
 
 require (
-	github.com/agynio/runner-core v0.0.0-20261030225440-ee50fe63df20
+	github.com/agynio/runner-core v0.0.0-20261031110857-2da0c242e393
 	github.com/google/uuid v1.6.0
 	go.uber.org/zap v1.27.1
 	google.golang.org/grpc v1.67.0
